@@ -9,8 +9,10 @@ $(COQMAKEFILE): _CoqProject
 validate: all
 	@if command -v coqchk >/dev/null 2>&1; then \
 		coqchk -silent -o -Q . "" dls; \
+	elif command -v rocqchk >/dev/null 2>&1; then \
+		rocqchk -silent -o -Q . "" dls; \
 	else \
-		rocq check -silent -o -Q . "" dls; \
+		echo "no kernel checker (coqchk or rocqchk) found" >&2; exit 1; \
 	fi
 
 extracted: all
