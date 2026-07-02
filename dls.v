@@ -2,28 +2,31 @@
 (*                                                                            *)
 (*          Duckworth-Lewis-Stern Method: Cricket Rain Interruption           *)
 (*                                                                            *)
-(*     Resource percentages over (overs, wickets) pairs, target revision      *)
-(*     under interruptions, and par score. Proves resource monotonicity,      *)
-(*     target positivity, and result decidability.                            *)
+(*     The published Standard Edition resource table, target revision         *)
+(*     under interruptions, par score, and result decision. Proves            *)
+(*     resource monotonicity, target positivity, and result decidability;     *)
+(*     replays the 1992 semi-final. Extracts to OCaml.                        *)
 (*                                                                            *)
 (*     Governs every rain-affected limited-overs international; the 1992      *)
 (*     World Cup semi-final controversy motivated its creation.               *)
 (*                                                                            *)
-(*     "Cricket is unique in that rain can deprive a team of resources        *)
-(*      it would otherwise have had."                                         *)
+(*     Cricket is unique in that rain can deprive a team of resources         *)
+(*     it would otherwise have had.                                           *)
 (*     - Frank Duckworth                                                      *)
 (*                                                                            *)
 (*     Author: Charles C. Norton                                              *)
 (*     Date: December 11, 2025                                                *)
+(*     Revised: July 2, 2026                                                  *)
 (*                                                                            *)
 (******************************************************************************)
 
-Require Import Coq.Arith.PeanoNat.
-Require Import Coq.Arith.Compare_dec.
-Require Import Coq.Bool.Bool.
-Require Import Coq.Lists.List.
-Require Import Coq.Init.Nat.
-Require Import Lia.
+From Stdlib Require Import Arith.PeanoNat.
+From Stdlib Require Import Arith.Compare_dec.
+From Stdlib Require Import Bool.Bool.
+From Stdlib Require Import Lists.List.
+From Stdlib Require Import Init.Nat.
+From Stdlib Require Import NArith.
+From Stdlib Require Import Lia.
 
 Local Set Warnings "-abstract-large-number".
 
@@ -196,6 +199,9 @@ Inductive PowerplayPhase :=
   | PP3
   | NoPowerplay.
 
+Scheme Equality for InningsPhase.
+Scheme Equality for PowerplayPhase.
+
 Record InningsState := mkInnings {
   inn_score : runs;
   inn_wickets : wickets;
@@ -229,7 +235,7 @@ Definition initial_innings (allocated : overs) : InningsState := {|
   inn_powerplay := PP1
 |}.
 
-Definition initial_innings_balls (allocated_balls : balls) : DetailedInningsState := {|
+Definition initial_innings_balls (fmt : MatchFormat) (allocated_balls : balls) : DetailedInningsState := {|
   det_score := 0;
   det_wickets := 0;
   det_balls_faced := 0;
@@ -237,8 +243,24 @@ Definition initial_innings_balls (allocated_balls : balls) : DetailedInningsStat
   det_phase := NotStarted;
   det_powerplay := PP1;
   det_in_powerplay := true;
-  det_powerplay_balls_remaining := if allocated_balls <=? 120 then 36 else 60
+  det_powerplay_balls_remaining := Nat.min (powerplay_balls fmt) allocated_balls
 |}.
+
+Example odi_initial_powerplay :
+  det_powerplay_balls_remaining (initial_innings_balls ODI 300) = 60.
+Proof. reflexivity. Qed.
+
+Example t20_initial_powerplay :
+  det_powerplay_balls_remaining (initial_innings_balls T20 120) = 36.
+Proof. reflexivity. Qed.
+
+Example hundred_initial_powerplay :
+  det_powerplay_balls_remaining (initial_innings_balls TheHundred 100) = 25.
+Proof. reflexivity. Qed.
+
+Example reduced_innings_powerplay_clamped :
+  det_powerplay_balls_remaining (initial_innings_balls ODI 30) = 30.
+Proof. reflexivity. Qed.
 
 Definition overs_remaining (inn : InningsState) : overs :=
   inn_overs_allocated inn - inn_overs_faced inn.
@@ -477,6 +499,146 @@ Definition target_from_states
   revised_target (inn_score t1) R1 R2 g50.
 
 (******************************************************************************)
+(*                     BALL-LEVEL TARGET CALCULATIONS                         *)
+(******************************************************************************)
+
+(* The ball-level pipeline works at the 10000 = 100.0% scale of
+   BallResourceTable, so the G50 share divides by 1000 where the over-level
+   formula divides by 100. The agreement theorems show that the two scales
+   compute identical targets on corresponding inputs. *)
+
+Definition ball_revised_target
+  (t1_score : runs) (R1 R2 : scaled_resource) (g50 : nat) : runs :=
+  if R2 <? R1 then
+    t1_score * R2 / R1 + 1
+  else
+    t1_score + g50 * (R2 - R1) / 1000 + 1.
+
+Definition ball_par_score
+  (t1_score : runs) (R1 R2_used : scaled_resource) (g50 : nat) : runs :=
+  if R2_used <? R1 then
+    t1_score * R2_used / R1
+  else
+    t1_score + g50 * (R2_used - R1) / 1000.
+
+Lemma div_scale_cancel :
+  forall a b k, k <> 0 -> (k * a) / (k * b) = a / b.
+Proof.
+  intros a b k Hk.
+  rewrite <- Nat.Div0.div_div.
+  rewrite Nat.mul_comm.
+  rewrite Nat.div_mul by exact Hk.
+  reflexivity.
+Qed.
+
+Theorem ball_revised_target_agrees :
+  forall t1_score R1 R2 g50,
+    ball_revised_target t1_score (10 * R1) (10 * R2) g50 =
+    revised_target t1_score R1 R2 g50.
+Proof.
+  intros t1_score R1 R2 g50.
+  unfold ball_revised_target, revised_target,
+         revised_target_method1, revised_target_method2.
+  destruct (R2 <? R1) eqn:E.
+  - assert (E10 : (10 * R2 <? 10 * R1) = true).
+    { apply Nat.ltb_lt. apply Nat.ltb_lt in E. lia. }
+    rewrite E10.
+    assert (Hd : t1_score * (10 * R2) / (10 * R1) = t1_score * R2 / R1).
+    { replace (t1_score * (10 * R2)) with (10 * (t1_score * R2)) by nia.
+      apply div_scale_cancel. lia. }
+    lia.
+  - assert (E10 : (10 * R2 <? 10 * R1) = false).
+    { apply Nat.ltb_ge. apply Nat.ltb_ge in E. lia. }
+    rewrite E10.
+    assert (Hd : g50 * (10 * R2 - 10 * R1) / 1000 = g50 * (R2 - R1) / 100).
+    { replace (10 * R2 - 10 * R1) with (10 * (R2 - R1)) by lia.
+      replace (g50 * (10 * (R2 - R1))) with (10 * (g50 * (R2 - R1))) by nia.
+      change 1000 with (10 * 100).
+      apply div_scale_cancel. lia. }
+    lia.
+Qed.
+
+Theorem ball_par_score_agrees :
+  forall t1_score R1 R2u g50,
+    ball_par_score t1_score (10 * R1) (10 * R2u) g50 =
+    par_score t1_score R1 R2u g50.
+Proof.
+  intros t1_score R1 R2u g50.
+  unfold ball_par_score, par_score.
+  destruct (R2u <? R1) eqn:E.
+  - assert (E10 : (10 * R2u <? 10 * R1) = true).
+    { apply Nat.ltb_lt. apply Nat.ltb_lt in E. lia. }
+    rewrite E10.
+    replace (t1_score * (10 * R2u)) with (10 * (t1_score * R2u)) by nia.
+    apply div_scale_cancel. lia.
+  - assert (E10 : (10 * R2u <? 10 * R1) = false).
+    { apply Nat.ltb_ge. apply Nat.ltb_ge in E. lia. }
+    rewrite E10.
+    assert (Hd : g50 * (10 * R2u - 10 * R1) / 1000 = g50 * (R2u - R1) / 100).
+    { replace (10 * R2u - 10 * R1) with (10 * (R2u - R1)) by lia.
+      replace (g50 * (10 * (R2u - R1))) with (10 * (g50 * (R2u - R1))) by nia.
+      change 1000 with (10 * 100).
+      apply div_scale_cancel. lia. }
+    lia.
+Qed.
+
+Definition ball_target_from_states
+  (tbl : BallResourceTable)
+  (t1 : DetailedInningsState)
+  (t2_allocated_balls : balls)
+  (t1_ints t2_ints : list BallInterruption)
+  (g50 : nat) : runs :=
+  let R1 := effective_ball_resources tbl
+              (ball_resources_at_start tbl (det_balls_allocated t1)) t1_ints in
+  let R2 := effective_ball_resources tbl
+              (ball_resources_at_start tbl t2_allocated_balls) t2_ints in
+  ball_revised_target (det_score t1) R1 R2 g50.
+
+Theorem ball_target_positive :
+  forall t1_score R1 R2 g50,
+    R1 > 0 -> ball_revised_target t1_score R1 R2 g50 >= 1.
+Proof.
+  intros. unfold ball_revised_target.
+  destruct (R2 <? R1); lia.
+Qed.
+
+Theorem ball_target_monotone_in_R2 :
+  forall t1_score R1 R2a R2b g50,
+    R1 > 0 -> R2a <= R2b ->
+    ball_revised_target t1_score R1 R2a g50 <=
+    ball_revised_target t1_score R1 R2b g50.
+Proof.
+  intros t1_score R1 R2a R2b g50 HR1 Hle.
+  unfold ball_revised_target.
+  destruct (R2a <? R1) eqn:Ea; destruct (R2b <? R1) eqn:Eb.
+  - apply Nat.add_le_mono_r.
+    apply Nat.Div0.div_le_mono.
+    apply Nat.mul_le_mono_l. exact Hle.
+  - apply Nat.ltb_lt in Ea. apply Nat.ltb_ge in Eb.
+    assert (t1_score * R2a / R1 <= t1_score).
+    { apply Nat.Div0.div_le_upper_bound. nia. }
+    lia.
+  - apply Nat.ltb_ge in Ea. apply Nat.ltb_lt in Eb. lia.
+  - apply Nat.ltb_ge in Ea, Eb.
+    apply Nat.add_le_mono_r.
+    apply Nat.add_le_mono_l.
+    apply Nat.Div0.div_le_mono.
+    apply Nat.mul_le_mono_l. lia.
+Qed.
+
+Theorem ball_equal_resources_fair :
+  forall t1_score R g50,
+    R > 0 ->
+    ball_revised_target t1_score R R g50 = t1_score + 1.
+Proof.
+  intros t1_score R g50 HR.
+  unfold ball_revised_target.
+  rewrite Nat.ltb_irrefl.
+  rewrite Nat.sub_diag, Nat.mul_0_r, Nat.Div0.div_0_l.
+  lia.
+Qed.
+
+(******************************************************************************)
 (*                            MATCH RESULT                                   *)
 (******************************************************************************)
 
@@ -487,6 +649,8 @@ Inductive MatchResult :=
   | NoResult
   | Abandoned.
 
+Scheme Equality for MatchResult.
+
 Definition result_to_nat (r : MatchResult) : nat :=
   match r with
   | Team1Wins => 0
@@ -496,10 +660,8 @@ Definition result_to_nat (r : MatchResult) : nat :=
   | Abandoned => 4
   end.
 
-Lemma result_eq_dec : forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2}.
-Proof.
-  intros [] []; (left; reflexivity) || (right; discriminate).
-Defined.
+Definition result_eq_dec : forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2} :=
+  MatchResult_eq_dec.
 
 Definition determine_result
   (target t2_score : runs)
@@ -590,12 +752,57 @@ Definition valid_interruption (int : Interruption) (inn : InningsState) : Prop :
   int_at_wickets int = inn_wickets inn /\
   int_overs_lost int <= int_at_overs int.
 
+(* An interruption history is recorded in match order. Each interruption
+   carries the overs remaining and wickets down at its own moment, so wicket
+   counts are nondecreasing and overs remaining nonincreasing along the
+   list; the innings state is threaded through the fold. *)
+Fixpoint valid_interruption_seq
+  (wkts_so_far : wickets) (overs_left : overs)
+  (ints : list Interruption) : Prop :=
+  match ints with
+  | [] => True
+  | i :: rest =>
+      int_at_overs i <= overs_left /\
+      int_overs_lost i <= int_at_overs i /\
+      wkts_so_far <= int_at_wickets i /\
+      int_at_wickets i <= 10 /\
+      valid_interruption_seq (int_at_wickets i) (int_at_overs i - int_overs_lost i) rest
+  end.
+
 Definition valid_match (m : MatchState) : Prop :=
   valid_innings (match_t1 m) (match_format m) /\
   valid_innings (match_t2 m) (match_format m) /\
-  Forall (fun i => valid_interruption i (match_t1 m)) (match_t1_interruptions m) /\
-  Forall (fun i => valid_interruption i (match_t2 m)) (match_t2_interruptions m) /\
+  valid_interruption_seq 0 (inn_overs_allocated (match_t1 m)) (match_t1_interruptions m) /\
+  valid_interruption_seq 0 (inn_overs_allocated (match_t2 m)) (match_t2_interruptions m) /\
   match_g50 m > 0.
+
+(* Sequential validity yields the pointwise bound each loss computation
+   needs. *)
+Lemma valid_seq_losses_bounded :
+  forall ints w r,
+    valid_interruption_seq w r ints ->
+    Forall (fun i => int_overs_lost i <= int_at_overs i) ints.
+Proof.
+  induction ints as [|i rest IH]; intros w r Hv.
+  - constructor.
+  - destruct Hv as (H1 & H2 & H3 & H4 & H5).
+    constructor.
+    + exact H2.
+    + eapply IH. exact H5.
+Qed.
+
+(* Two interruptions at different wicket counts validate under the
+   sequential predicate; the pointwise pin admitted only one wicket count
+   across the whole history. *)
+Example valid_seq_two_interruptions :
+  valid_interruption_seq 0 50
+    [ {| int_at_overs := 40; int_at_wickets := 2;
+         int_overs_lost := 5; int_during_innings := 1 |} ;
+      {| int_at_overs := 20; int_at_wickets := 6;
+         int_overs_lost := 10; int_during_innings := 1 |} ].
+Proof.
+  simpl. repeat split; lia.
+Qed.
 
 (******************************************************************************)
 (*                      RESOURCE TABLE PROPERTIES                            *)
@@ -995,17 +1202,11 @@ Proof.
   apply Nat.eq_dec.
 Defined.
 
-Theorem phase_decidable :
-  forall p1 p2 : InningsPhase, {p1 = p2} + {p1 <> p2}.
-Proof.
-  intros [] []; (left; reflexivity) || (right; discriminate).
-Defined.
+Definition phase_decidable :
+  forall p1 p2 : InningsPhase, {p1 = p2} + {p1 <> p2} := InningsPhase_eq_dec.
 
-Theorem result_decidable_eq :
-  forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2}.
-Proof.
-  exact result_eq_dec.
-Defined.
+Definition result_decidable_eq :
+  forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2} := MatchResult_eq_dec.
 
 (******************************************************************************)
 (*                         SAMPLE CALCULATIONS                               *)
@@ -1213,16 +1414,6 @@ Definition exp_decay_approx (u : overs) (w : wickets) : resource :=
     let decay := 1000 - (1000 * 1000 / (1000 + b * u)) in
     z0 * decay / 1000.
 
-Definition dls_lookup (o : overs) (w : wickets) : resource :=
-  if w =? 10 then 0
-  else if o =? 0 then 0
-  else if (o =? 50) && (w =? 0) then 1000
-  else
-    let raw := exp_decay_approx o w in
-    if (o =? 50) && (w =? 0) then 1000
-    else if raw =? 0 then 1
-    else raw.
-
 Definition icc_resource_percentage (u : overs) (w : wickets) : nat :=
   if (w =? 10) then 0
   else if (u =? 0) then 0
@@ -1280,6 +1471,164 @@ Proof.
   - reflexivity.
   - simpl. reflexivity.
 Qed.
+
+(******************************************************************************)
+(*                 RATIONAL-DECAY MODEL AS A VERIFIED TABLE                   *)
+(******************************************************************************)
+
+(* The raw rational-decay curves cross at very low overs: the early-innings
+   slope Z0(w) * b(w) grows with w through w = 3 before the asymptote
+   shrinks, so exp_decay_approx is not wicket-antitone there. A running
+   minimum over wickets restores the wicket law exactly, the domain is
+   capped at 50 overs, and normalization by the model value at
+   (50 overs, 0 wickets) pins 100% at a full innings. *)
+
+Lemma exp_decay_approx_mono_u :
+  forall u1 u2 w, u1 <= u2 ->
+    exp_decay_approx u1 w <= exp_decay_approx u2 w.
+Proof.
+  intros u1 u2 w Hle.
+  unfold exp_decay_approx.
+  destruct (w =? 10) eqn:Hw.
+  - lia.
+  - destruct (u1 =? 0) eqn:Hu1.
+    + lia.
+    + destruct (u2 =? 0) eqn:Hu2.
+      * apply Nat.eqb_neq in Hu1. apply Nat.eqb_eq in Hu2. lia.
+      * apply Nat.Div0.div_le_mono.
+        apply Nat.mul_le_mono_l.
+        assert (HA : 1000 * 1000 / (1000 + decay_rate_scaled w * u2) <=
+                     1000 * 1000 / (1000 + decay_rate_scaled w * u1)).
+        { apply Nat.div_le_compat_l.
+          split.
+          - lia.
+          - apply Nat.add_le_mono_l.
+            apply Nat.mul_le_mono_l. exact Hle. }
+        assert (HB : 1000 * 1000 / (1000 + decay_rate_scaled w * u1) <= 1000).
+        { apply Nat.Div0.div_le_upper_bound. nia. }
+        lia.
+Qed.
+
+Fixpoint rational_capped (u : overs) (w : wickets) : resource :=
+  match w with
+  | 0 => exp_decay_approx u 0
+  | S w' => Nat.min (exp_decay_approx u (S w')) (rational_capped u w')
+  end.
+
+Lemma rational_capped_mono_u :
+  forall w u1 u2, u1 <= u2 ->
+    rational_capped u1 w <= rational_capped u2 w.
+Proof.
+  induction w as [|w IH]; intros u1 u2 Hle; simpl.
+  - apply exp_decay_approx_mono_u. exact Hle.
+  - apply Nat.min_le_compat.
+    + apply exp_decay_approx_mono_u. exact Hle.
+    + apply IH. exact Hle.
+Qed.
+
+Lemma rational_capped_antitone_step :
+  forall u w, rational_capped u (S w) <= rational_capped u w.
+Proof.
+  intros u w. simpl. apply Nat.le_min_r.
+Qed.
+
+Lemma rational_capped_antitone :
+  forall u w1 w2, w1 <= w2 ->
+    rational_capped u w2 <= rational_capped u w1.
+Proof.
+  intros u w1 w2 Hle.
+  induction Hle as [|m Hle IH].
+  - lia.
+  - eapply Nat.le_trans; [apply rational_capped_antitone_step | exact IH].
+Qed.
+
+Lemma rational_capped_allout :
+  forall u w, 10 <= w -> rational_capped u w = 0.
+Proof.
+  intros u w Hw.
+  assert (H10 : rational_capped u 10 = 0).
+  { change (rational_capped u 10) with
+      (Nat.min (exp_decay_approx u 10) (rational_capped u 9)).
+    rewrite exp_decay_allout. apply Nat.min_0_l. }
+  assert (Hle := rational_capped_antitone u 10 w Hw).
+  lia.
+Qed.
+
+Lemma rational_capped_no_overs :
+  forall w, rational_capped 0 w = 0.
+Proof.
+  induction w as [|w IH]; simpl.
+  - apply exp_decay_no_overs.
+  - rewrite exp_decay_no_overs, IH. reflexivity.
+Qed.
+
+Lemma exp_decay_full_value : exp_decay_approx 50 0 = 702.
+Proof. reflexivity. Qed.
+
+(* The rational-decay lookup: capped domain, antitone envelope, normalized
+   so a full 50-over innings is exactly 100%. *)
+Definition dls_lookup (o : overs) (w : wickets) : resource :=
+  rational_capped (Nat.min o 50) w * 1000 / 702.
+
+Lemma dls_lookup_overs_mono :
+  forall u1 u2 w, u1 <= u2 -> dls_lookup u1 w <= dls_lookup u2 w.
+Proof.
+  intros u1 u2 w Hle.
+  unfold dls_lookup.
+  apply Nat.Div0.div_le_mono.
+  apply Nat.mul_le_mono_r.
+  apply rational_capped_mono_u.
+  apply Nat.min_le_compat_r. exact Hle.
+Qed.
+
+Lemma dls_lookup_wickets_mono :
+  forall u w1 w2, w1 <= w2 -> dls_lookup u w2 <= dls_lookup u w1.
+Proof.
+  intros u w1 w2 Hle.
+  unfold dls_lookup.
+  apply Nat.Div0.div_le_mono.
+  apply Nat.mul_le_mono_r.
+  apply rational_capped_antitone. exact Hle.
+Qed.
+
+Lemma dls_lookup_allout : forall u, dls_lookup u 10 = 0.
+Proof.
+  intros u. unfold dls_lookup.
+  rewrite rational_capped_allout by lia.
+  reflexivity.
+Qed.
+
+Lemma dls_lookup_no_overs : forall w, dls_lookup 0 w = 0.
+Proof.
+  intros w. unfold dls_lookup.
+  simpl.
+  rewrite rational_capped_no_overs. reflexivity.
+Qed.
+
+Lemma dls_lookup_full_odi : dls_lookup 50 0 = 1000.
+Proof. reflexivity. Qed.
+
+Definition RationalDecayTable : ResourceTable := {|
+  lookup := dls_lookup;
+  table_overs_mono := dls_lookup_overs_mono;
+  table_wickets_mono := dls_lookup_wickets_mono;
+  table_allout := dls_lookup_allout;
+  table_no_overs := dls_lookup_no_overs;
+  table_full_odi := dls_lookup_full_odi
+|}.
+
+(* In mid-innings territory the envelope coincides with the raw model. *)
+Example rational_capped_agrees_mid :
+  rational_capped 25 5 = exp_decay_approx 25 5.
+Proof. reflexivity. Qed.
+
+(* At very low overs the raw model loses wicket-antitonicity and the
+   envelope bites: with one over left, two wickets down rates above zero
+   wickets down in the raw model. *)
+Example rational_envelope_bites_low_overs :
+  exp_decay_approx 1 2 = 47 /\ exp_decay_approx 1 0 = 45 /\
+  rational_capped 1 2 = 45.
+Proof. repeat split; reflexivity. Qed.
 
 (******************************************************************************)
 (*                       DUMMY TABLE INSTANTIATION                           *)
@@ -1542,13 +1891,9 @@ Proof. reflexivity. Qed.
 (*                 SCHEME EQUALITY / UNIFORM DECIDABILITY                    *)
 (******************************************************************************)
 
-(** Replaces the decidability ladder with a single uniform mechanism.
-    Scheme Equality auto-generates boolean equality and decidability proofs
-    for simple inductive types. *)
-
-Scheme Equality for InningsPhase.
-Scheme Equality for PowerplayPhase.
-Scheme Equality for MatchResult.
+(** Scheme Equality (declared at each inductive's definition site) is the
+    single uniform decidability mechanism; the earlier ladder names are
+    definitional aliases of the generated instances. *)
 
 Lemma InningsPhase_beq_refl : forall p, InningsPhase_beq p p = true.
 Proof. intros []; reflexivity. Qed.
@@ -1578,7 +1923,7 @@ Proof.
 Qed.
 
 (* Uniform decision procedure for all four types *)
-Definition match_state_eq_dec :
+Definition match_result_eq_dec :
   forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2} := MatchResult_eq_dec.
 
 Definition phase_eq_dec :
@@ -2132,6 +2477,96 @@ Proof.
     + right. right. reflexivity.
 Qed.
 
+(******************************************************************************)
+(*                       COMBINED RESULT DECISION                             *)
+(******************************************************************************)
+
+(* ECB/ICC Standard Edition regulations, clause 5.5: if the match has to be
+   terminated during Team 2's innings after the minimum overs, the result
+   is decided by comparing Team 2's score with the par score; clause 7
+   describes completed chases by target. decide_match dispatches
+   accordingly: an innings ended by stoppage (Interrupted or
+   InningsAbandoned phase) is judged against par, anything else by target
+   as before. *)
+
+Definition ended_by_stoppage (p : InningsPhase) : bool :=
+  match p with
+  | Interrupted | InningsAbandoned => true
+  | _ => false
+  end.
+
+Definition decide_match (tbl : ResourceTable) (m : MatchState) : MatchResult :=
+  if negb (min_overs_met m) then NoResult
+  else if ended_by_stoppage (inn_phase (match_t2 m)) then
+    par_result (compute_par tbl m) (inn_score (match_t2 m)) true
+  else
+    determine_result (compute_target tbl m) (inn_score (match_t2 m))
+      (is_complete (match_t2 m)) true.
+
+Theorem decide_match_below_min :
+  forall tbl m,
+    min_overs_met m = false ->
+    decide_match tbl m = NoResult.
+Proof.
+  intros tbl m H.
+  unfold decide_match.
+  rewrite H. reflexivity.
+Qed.
+
+Theorem decide_match_completed_agrees :
+  forall tbl m,
+    min_overs_met m = true ->
+    inn_phase (match_t2 m) = Completed ->
+    decide_match tbl m = compute_result tbl m.
+Proof.
+  intros tbl m Hmin Hphase.
+  unfold decide_match, compute_result.
+  rewrite Hmin, Hphase.
+  reflexivity.
+Qed.
+
+Theorem decide_match_stopped_par :
+  forall tbl m,
+    min_overs_met m = true ->
+    ended_by_stoppage (inn_phase (match_t2 m)) = true ->
+    decide_match tbl m =
+    par_result (compute_par tbl m) (inn_score (match_t2 m)) true.
+Proof.
+  intros tbl m Hmin Hstop.
+  unfold decide_match.
+  rewrite Hmin, Hstop. reflexivity.
+Qed.
+
+(* On a terminated chase the decision is the par trichotomy of clause
+   5.5: above par Team 2 win, below par Team 1 win, level par a tie. *)
+Theorem decide_match_stopped_trichotomy :
+  forall tbl m,
+    min_overs_met m = true ->
+    ended_by_stoppage (inn_phase (match_t2 m)) = true ->
+    (decide_match tbl m = Team1Wins /\
+       inn_score (match_t2 m) < compute_par tbl m) \/
+    (decide_match tbl m = Team2Wins /\
+       compute_par tbl m < inn_score (match_t2 m)) \/
+    (decide_match tbl m = Tie /\
+       inn_score (match_t2 m) = compute_par tbl m).
+Proof.
+  intros tbl m Hmin Hstop.
+  rewrite (decide_match_stopped_par tbl m Hmin Hstop).
+  unfold par_result. simpl.
+  destruct (inn_score (match_t2 m) <? compute_par tbl m) eqn:E1.
+  - left. split; [reflexivity | apply Nat.ltb_lt; exact E1].
+  - destruct (compute_par tbl m <? inn_score (match_t2 m)) eqn:E2.
+    + right; left. split; [reflexivity | apply Nat.ltb_lt; exact E2].
+    + right; right. split; [reflexivity |].
+      apply Nat.ltb_ge in E1. apply Nat.ltb_ge in E2. lia.
+Qed.
+
+(* The regulations' own worked example, clause 7.1.2: chasing 201, Team 2
+   are 115/4 after 30 overs with par 110 when the match is abandoned;
+   Team 2 win by 5 runs. *)
+Example ecb_example_7_1_2 : par_result 110 115 true = Team2Wins.
+Proof. reflexivity. Qed.
+
 Definition min_balls_met_det (det : DetailedInningsState) (fmt : MatchFormat) : bool :=
   min_balls_for_result fmt <=? det_balls_faced det.
 
@@ -2284,6 +2719,92 @@ Proof.
 Qed.
 
 (******************************************************************************)
+(*                   POWERPLAY-AWARE TABLE CONSTRUCTOR                        *)
+(******************************************************************************)
+
+(* The published DLS tables are fitted to innings that include mandatory
+   powerplays, so target computation from a published table applies no
+   multiplier: fielding-restriction effects are already in the data. The
+   constructor below scopes the explicit what-if boost model instead: it
+   bakes the powerplay adjustment into the table, capped at 100%, and the
+   result is again a lawful ResourceTable. *)
+
+Definition powerplay_boost_lookup (tbl : ResourceTable) (o : overs) (w : wickets) : resource :=
+  Nat.min 1000 (powerplay_resource_adjustment (lookup tbl o w) true).
+
+Lemma powerplay_boost_overs_mono :
+  forall tbl u1 u2 w, u1 <= u2 ->
+    powerplay_boost_lookup tbl u1 w <= powerplay_boost_lookup tbl u2 w.
+Proof.
+  intros tbl u1 u2 w Hle.
+  unfold powerplay_boost_lookup.
+  assert (H : powerplay_resource_adjustment (lookup tbl u1 w) true <=
+              powerplay_resource_adjustment (lookup tbl u2 w) true).
+  { apply powerplay_adjustment_mono. apply table_overs_mono. exact Hle. }
+  lia.
+Qed.
+
+Lemma powerplay_boost_wickets_mono :
+  forall tbl u w1 w2, w1 <= w2 ->
+    powerplay_boost_lookup tbl u w2 <= powerplay_boost_lookup tbl u w1.
+Proof.
+  intros tbl u w1 w2 Hle.
+  unfold powerplay_boost_lookup.
+  assert (H : powerplay_resource_adjustment (lookup tbl u w2) true <=
+              powerplay_resource_adjustment (lookup tbl u w1) true).
+  { apply powerplay_adjustment_mono. apply table_wickets_mono. exact Hle. }
+  lia.
+Qed.
+
+Lemma powerplay_boost_allout :
+  forall tbl u, powerplay_boost_lookup tbl u 10 = 0.
+Proof.
+  intros tbl u.
+  unfold powerplay_boost_lookup.
+  rewrite table_allout.
+  reflexivity.
+Qed.
+
+Lemma powerplay_boost_no_overs :
+  forall tbl w, powerplay_boost_lookup tbl 0 w = 0.
+Proof.
+  intros tbl w.
+  unfold powerplay_boost_lookup.
+  rewrite table_no_overs.
+  reflexivity.
+Qed.
+
+Lemma powerplay_boost_full_odi :
+  forall tbl, powerplay_boost_lookup tbl 50 0 = 1000.
+Proof.
+  intros tbl.
+  unfold powerplay_boost_lookup.
+  rewrite table_full_odi.
+  reflexivity.
+Qed.
+
+Definition PowerplayBoostTable (tbl : ResourceTable) : ResourceTable := {|
+  lookup := powerplay_boost_lookup tbl;
+  table_overs_mono := powerplay_boost_overs_mono tbl;
+  table_wickets_mono := powerplay_boost_wickets_mono tbl;
+  table_allout := powerplay_boost_allout tbl;
+  table_no_overs := powerplay_boost_no_overs tbl;
+  table_full_odi := powerplay_boost_full_odi tbl
+|}.
+
+Theorem powerplay_boost_dominates :
+  forall tbl o w,
+    lookup tbl o w <= 1000 ->
+    lookup tbl o w <= lookup (PowerplayBoostTable tbl) o w.
+Proof.
+  intros tbl o w Hcap.
+  simpl.
+  unfold powerplay_boost_lookup.
+  assert (H := powerplay_adjustment_increases (lookup tbl o w)).
+  lia.
+Qed.
+
+(******************************************************************************)
 (*                     THE HUNDRED FORMAT THEOREMS                           *)
 (******************************************************************************)
 
@@ -2342,15 +2863,41 @@ Theorem hundred_powerplay_proportion :
   pp * 4 = tot.
 Proof. simpl. lia. Qed.
 
-(* In the Hundred, balls per "over" differ from cricket norm.
-   Hundred uses 5-ball "overs" effectively (16 overs × 5 balls ≠ 100;
-   actually 5-ball "fives", total 100 balls / 5 = 20 fives, but the
-   format gives 16 fives + 1 ten or similar). Test format consistency: *)
+(* The Hundred delivers 100 balls per innings in twenty five-ball sets
+   (a bowler may bowl two consecutive sets). total_overs 16 is the six-ball
+   floor (100 / 6) used by the overs-based machinery; the ball-native model
+   below is the faithful representation. Test format consistency: *)
 Theorem hundred_format_consistency :
   total_balls_in_format TheHundred = 100 /\
   total_overs TheHundred = 16 /\
   max_powerplay_overs TheHundred = 4.
 Proof. repeat split; reflexivity. Qed.
+
+Definition hundred_sets : nat := 20.
+
+Definition balls_per_set : nat := 5.
+
+Theorem hundred_balls_from_sets :
+  hundred_sets * balls_per_set = total_balls_in_format TheHundred.
+Proof. reflexivity. Qed.
+
+(* Ball-native innings for The Hundred: the format is represented by its
+   100 balls and 25-ball powerplay through DetailedInningsState, not by
+   six-ball-over approximation. *)
+Definition hundred_innings : DetailedInningsState :=
+  initial_innings_balls TheHundred (total_balls_in_format TheHundred).
+
+Example hundred_innings_allocation :
+  det_balls_allocated hundred_innings = 100.
+Proof. reflexivity. Qed.
+
+Example hundred_innings_powerplay :
+  det_powerplay_balls_remaining hundred_innings = 25.
+Proof. reflexivity. Qed.
+
+Theorem hundred_min_balls_equals_powerplay :
+  min_balls_for_result TheHundred = powerplay_balls TheHundred.
+Proof. reflexivity. Qed.
 
 (******************************************************************************)
 (*               INTERPOLATED BALL TABLE FROM OVERS TABLE                      *)
@@ -2852,6 +3399,602 @@ Example icc_table_10_3 : icc_lookup 10 3 < icc_lookup 25 3.
 Proof. vm_compute. lia. Qed.
 
 (******************************************************************************)
+(*              PUBLISHED DL STANDARD EDITION TABLE (2002)                    *)
+(*                                                                            *)
+(*  The official ball-by-ball table of resource percentages remaining for     *)
+(*  the Duckworth/Lewis Standard Edition, exactly as published (ECB           *)
+(*  Duckworth/Lewis/Stern Regulations; ICC Playing Handbook, Standard         *)
+(*  Edition). Row index = balls remaining (0 .. 300); column index =          *)
+(*  wickets lost (0 .. 9). Values are percentages scaled by 10, so 100.0%     *)
+(*  = 1000 and the printed 0.1% resolution is exact in nat. The record        *)
+(*  laws (monotone in balls, antitone in wickets, boundary rows) are          *)
+(*  certified by vm_compute over the whole grid.                              *)
+(******************************************************************************)
+
+Definition dl2002_data : list (list nat) := [
+  [0; 0; 0; 0; 0; 0; 0; 0; 0; 0];
+  [6; 6; 6; 6; 6; 6; 6; 6; 6; 6];
+  [12; 12; 12; 12; 12; 12; 12; 12; 12; 11];
+  [18; 18; 18; 18; 18; 18; 18; 18; 17; 15];
+  [24; 24; 24; 24; 24; 24; 24; 23; 22; 19];
+  [30; 30; 30; 30; 30; 30; 29; 29; 27; 22];
+  [36; 36; 36; 36; 36; 35; 35; 34; 32; 25];
+  [42; 42; 42; 42; 42; 41; 40; 39; 36; 28];
+  [48; 48; 48; 48; 47; 47; 46; 44; 40; 30];
+  [54; 54; 54; 53; 53; 52; 51; 49; 44; 32];
+  [60; 60; 59; 59; 59; 58; 56; 53; 48; 34];
+  [66; 65; 65; 65; 64; 63; 61; 58; 51; 36];
+  [72; 71; 71; 70; 70; 68; 66; 62; 55; 37];
+  [77; 77; 77; 76; 75; 74; 71; 67; 58; 38];
+  [83; 83; 82; 82; 80; 79; 76; 71; 61; 39];
+  [89; 88; 88; 87; 86; 84; 81; 75; 64; 40];
+  [94; 94; 93; 93; 91; 89; 85; 79; 67; 41];
+  [100; 100; 99; 98; 96; 94; 90; 83; 69; 42];
+  [106; 105; 104; 103; 102; 99; 95; 87; 72; 42];
+  [111; 111; 110; 109; 107; 104; 99; 90; 74; 43];
+  [117; 116; 115; 114; 112; 109; 103; 94; 77; 43];
+  [123; 122; 121; 119; 117; 113; 108; 97; 79; 44];
+  [128; 127; 126; 125; 122; 118; 112; 101; 81; 44];
+  [134; 133; 132; 130; 127; 123; 116; 104; 83; 45];
+  [139; 138; 137; 135; 132; 127; 120; 107; 84; 45];
+  [145; 144; 142; 140; 137; 132; 124; 110; 86; 45];
+  [150; 149; 147; 145; 142; 136; 128; 113; 88; 45];
+  [156; 154; 153; 150; 147; 141; 132; 116; 89; 46];
+  [161; 160; 158; 155; 151; 145; 136; 119; 91; 46];
+  [166; 165; 163; 160; 156; 150; 139; 122; 92; 46];
+  [172; 170; 168; 165; 161; 154; 143; 125; 94; 46];
+  [177; 175; 173; 170; 165; 158; 147; 127; 95; 46];
+  [182; 181; 178; 175; 170; 162; 150; 130; 96; 46];
+  [188; 186; 183; 180; 174; 166; 154; 132; 97; 46];
+  [193; 191; 188; 185; 179; 170; 157; 135; 98; 46];
+  [198; 196; 193; 189; 183; 174; 160; 137; 100; 46];
+  [203; 201; 198; 194; 188; 178; 164; 139; 101; 46];
+  [208; 206; 203; 199; 192; 182; 167; 141; 101; 47];
+  [214; 211; 208; 203; 197; 186; 170; 144; 102; 47];
+  [219; 216; 213; 208; 201; 190; 173; 146; 103; 47];
+  [224; 221; 218; 213; 205; 194; 176; 148; 104; 47];
+  [229; 226; 223; 217; 209; 198; 179; 150; 105; 47];
+  [234; 231; 227; 222; 214; 201; 182; 152; 105; 47];
+  [239; 236; 232; 226; 218; 205; 185; 153; 106; 47];
+  [244; 241; 237; 231; 222; 209; 188; 155; 107; 47];
+  [249; 246; 241; 235; 226; 212; 191; 157; 107; 47];
+  [254; 251; 246; 240; 230; 216; 194; 159; 108; 47];
+  [259; 256; 251; 244; 234; 219; 196; 160; 109; 47];
+  [264; 260; 255; 248; 238; 223; 199; 162; 109; 47];
+  [269; 265; 260; 253; 242; 226; 202; 164; 110; 47];
+  [274; 270; 264; 257; 246; 229; 204; 165; 110; 47];
+  [279; 275; 269; 261; 250; 233; 207; 167; 111; 47];
+  [283; 279; 273; 265; 253; 236; 209; 168; 111; 47];
+  [288; 284; 278; 269; 257; 239; 212; 170; 111; 47];
+  [293; 289; 282; 274; 261; 242; 214; 171; 112; 47];
+  [298; 293; 287; 278; 265; 245; 217; 172; 112; 47];
+  [303; 298; 291; 282; 268; 249; 219; 174; 113; 47];
+  [307; 302; 296; 286; 272; 252; 221; 175; 113; 47];
+  [312; 307; 300; 290; 276; 255; 223; 176; 113; 47];
+  [317; 311; 304; 294; 279; 258; 226; 177; 114; 47];
+  [321; 316; 308; 298; 283; 261; 228; 179; 114; 47];
+  [326; 320; 313; 302; 286; 264; 230; 180; 114; 47];
+  [331; 325; 317; 306; 290; 266; 232; 181; 114; 47];
+  [335; 329; 321; 310; 293; 269; 234; 182; 115; 47];
+  [340; 334; 325; 314; 297; 272; 236; 183; 115; 47];
+  [344; 338; 329; 317; 300; 275; 238; 184; 115; 47];
+  [349; 342; 334; 321; 304; 278; 240; 185; 115; 47];
+  [353; 347; 338; 325; 307; 280; 242; 186; 115; 47];
+  [358; 351; 342; 329; 310; 283; 244; 187; 116; 47];
+  [362; 355; 346; 332; 313; 286; 246; 188; 116; 47];
+  [367; 360; 350; 336; 317; 288; 248; 189; 116; 47];
+  [371; 364; 354; 340; 320; 291; 249; 189; 116; 47];
+  [376; 368; 358; 343; 323; 294; 251; 190; 116; 47];
+  [380; 372; 362; 347; 326; 296; 253; 191; 116; 47];
+  [385; 377; 366; 351; 329; 299; 255; 192; 117; 47];
+  [389; 381; 370; 354; 332; 301; 256; 193; 117; 47];
+  [393; 385; 374; 358; 336; 304; 258; 193; 117; 47];
+  [398; 389; 377; 361; 339; 306; 259; 194; 117; 47];
+  [402; 393; 381; 365; 342; 308; 261; 195; 117; 47];
+  [406; 397; 385; 368; 345; 311; 263; 195; 117; 47];
+  [410; 401; 389; 372; 348; 313; 264; 196; 117; 47];
+  [415; 405; 393; 375; 350; 315; 266; 197; 117; 47];
+  [419; 409; 396; 379; 353; 318; 267; 197; 118; 47];
+  [423; 413; 400; 382; 356; 320; 269; 198; 118; 47];
+  [427; 417; 404; 385; 359; 322; 270; 199; 118; 47];
+  [431; 421; 408; 389; 362; 324; 271; 199; 118; 47];
+  [435; 425; 411; 392; 365; 326; 273; 200; 118; 47];
+  [440; 429; 415; 395; 368; 328; 274; 200; 118; 47];
+  [444; 433; 418; 398; 370; 331; 275; 201; 118; 47];
+  [448; 437; 422; 402; 373; 333; 277; 201; 118; 47];
+  [452; 441; 426; 405; 376; 335; 278; 202; 118; 47];
+  [456; 445; 429; 408; 378; 337; 279; 202; 118; 47];
+  [460; 448; 433; 411; 381; 339; 281; 203; 118; 47];
+  [464; 452; 436; 414; 384; 341; 282; 203; 118; 47];
+  [468; 456; 440; 417; 386; 343; 283; 204; 118; 47];
+  [472; 460; 443; 420; 389; 345; 284; 204; 118; 47];
+  [476; 463; 447; 423; 391; 347; 285; 205; 118; 47];
+  [480; 467; 450; 427; 394; 348; 286; 205; 118; 47];
+  [484; 471; 454; 430; 396; 350; 288; 205; 119; 47];
+  [488; 475; 457; 433; 399; 352; 289; 206; 119; 47];
+  [492; 478; 460; 436; 401; 354; 290; 206; 119; 47];
+  [495; 482; 464; 438; 404; 356; 291; 207; 119; 47];
+  [499; 485; 467; 441; 406; 358; 292; 207; 119; 47];
+  [503; 489; 470; 444; 409; 359; 293; 207; 119; 47];
+  [507; 493; 474; 447; 411; 361; 294; 208; 119; 47];
+  [511; 496; 477; 450; 413; 363; 295; 208; 119; 47];
+  [515; 500; 480; 453; 416; 364; 296; 208; 119; 47];
+  [518; 503; 483; 456; 418; 366; 297; 209; 119; 47];
+  [522; 507; 486; 459; 420; 368; 298; 209; 119; 47];
+  [526; 510; 490; 461; 423; 369; 299; 209; 119; 47];
+  [529; 514; 493; 464; 425; 371; 300; 210; 119; 47];
+  [533; 517; 496; 467; 427; 373; 300; 210; 119; 47];
+  [537; 521; 499; 470; 429; 374; 301; 210; 119; 47];
+  [541; 524; 502; 472; 432; 376; 302; 210; 119; 47];
+  [544; 528; 505; 475; 434; 377; 303; 211; 119; 47];
+  [548; 531; 508; 478; 436; 379; 304; 211; 119; 47];
+  [551; 534; 511; 480; 438; 380; 305; 211; 119; 47];
+  [555; 538; 515; 483; 440; 382; 306; 211; 119; 47];
+  [559; 541; 518; 486; 442; 383; 306; 212; 119; 47];
+  [562; 544; 521; 488; 444; 385; 307; 212; 119; 47];
+  [566; 548; 524; 491; 446; 386; 308; 212; 119; 47];
+  [569; 551; 526; 493; 448; 388; 309; 212; 119; 47];
+  [573; 554; 529; 496; 450; 389; 309; 212; 119; 47];
+  [576; 557; 532; 498; 452; 390; 310; 213; 119; 47];
+  [580; 561; 535; 501; 454; 392; 311; 213; 119; 47];
+  [583; 564; 538; 503; 456; 393; 311; 213; 119; 47];
+  [587; 567; 541; 506; 458; 394; 312; 213; 119; 47];
+  [590; 570; 544; 508; 460; 396; 313; 213; 119; 47];
+  [593; 573; 547; 511; 462; 397; 314; 214; 119; 47];
+  [597; 577; 550; 513; 464; 398; 314; 214; 119; 47];
+  [600; 580; 552; 515; 466; 400; 315; 214; 119; 47];
+  [604; 583; 555; 518; 468; 401; 315; 214; 119; 47];
+  [607; 586; 558; 520; 470; 402; 316; 214; 119; 47];
+  [610; 589; 561; 523; 471; 403; 317; 214; 119; 47];
+  [614; 592; 563; 525; 473; 404; 317; 215; 119; 47];
+  [617; 595; 566; 527; 475; 406; 318; 215; 119; 47];
+  [620; 598; 569; 529; 477; 407; 318; 215; 119; 47];
+  [624; 601; 572; 532; 479; 408; 319; 215; 119; 47];
+  [627; 604; 574; 534; 480; 409; 320; 215; 119; 47];
+  [630; 607; 577; 536; 482; 410; 320; 215; 119; 47];
+  [633; 610; 580; 538; 484; 411; 321; 215; 119; 47];
+  [637; 613; 582; 541; 485; 412; 321; 216; 119; 47];
+  [640; 616; 585; 543; 487; 414; 322; 216; 119; 47];
+  [643; 619; 587; 545; 489; 415; 322; 216; 119; 47];
+  [646; 622; 590; 547; 490; 416; 323; 216; 119; 47];
+  [649; 625; 593; 549; 492; 417; 323; 216; 119; 47];
+  [652; 628; 595; 552; 494; 418; 324; 216; 119; 47];
+  [656; 631; 598; 554; 495; 419; 324; 216; 119; 47];
+  [659; 633; 600; 556; 497; 420; 325; 216; 119; 47];
+  [662; 636; 603; 558; 498; 421; 325; 216; 119; 47];
+  [665; 639; 605; 560; 500; 422; 326; 216; 119; 47];
+  [668; 642; 608; 562; 502; 423; 326; 217; 119; 47];
+  [671; 645; 610; 564; 503; 424; 326; 217; 119; 47];
+  [674; 648; 613; 566; 505; 425; 327; 217; 119; 47];
+  [677; 650; 615; 568; 506; 426; 327; 217; 119; 47];
+  [680; 653; 617; 570; 508; 427; 328; 217; 119; 47];
+  [683; 656; 620; 572; 509; 428; 328; 217; 119; 47];
+  [686; 659; 622; 574; 511; 428; 328; 217; 119; 47];
+  [689; 661; 625; 576; 512; 429; 329; 217; 119; 47];
+  [692; 664; 627; 578; 513; 430; 329; 217; 119; 47];
+  [695; 667; 629; 580; 515; 431; 330; 217; 119; 47];
+  [698; 669; 632; 582; 516; 432; 330; 217; 119; 47];
+  [701; 672; 634; 584; 518; 433; 330; 217; 119; 47];
+  [704; 675; 636; 585; 519; 434; 331; 217; 119; 47];
+  [707; 677; 639; 587; 520; 434; 331; 218; 119; 47];
+  [710; 680; 641; 589; 522; 435; 331; 218; 119; 47];
+  [713; 682; 643; 591; 523; 436; 332; 218; 119; 47];
+  [715; 685; 645; 593; 524; 437; 332; 218; 119; 47];
+  [718; 688; 648; 595; 526; 438; 332; 218; 119; 47];
+  [721; 690; 650; 597; 527; 439; 333; 218; 119; 47];
+  [724; 693; 652; 598; 528; 439; 333; 218; 119; 47];
+  [727; 695; 654; 600; 530; 440; 333; 218; 119; 47];
+  [730; 698; 656; 602; 531; 441; 334; 218; 119; 47];
+  [732; 700; 659; 604; 532; 442; 334; 218; 119; 47];
+  [735; 703; 661; 605; 534; 442; 334; 218; 119; 47];
+  [738; 705; 663; 607; 535; 443; 335; 218; 119; 47];
+  [741; 708; 665; 609; 536; 444; 335; 218; 119; 47];
+  [743; 710; 667; 611; 537; 444; 335; 218; 119; 47];
+  [746; 713; 669; 612; 538; 445; 335; 218; 119; 47];
+  [749; 715; 671; 614; 540; 446; 336; 218; 119; 47];
+  [751; 718; 673; 616; 541; 447; 336; 218; 119; 47];
+  [754; 720; 676; 617; 542; 447; 336; 218; 119; 47];
+  [757; 722; 678; 619; 543; 448; 336; 218; 119; 47];
+  [759; 725; 680; 620; 544; 449; 337; 218; 119; 47];
+  [762; 727; 682; 622; 545; 449; 337; 219; 119; 47];
+  [765; 729; 684; 624; 547; 450; 337; 219; 119; 47];
+  [767; 732; 686; 625; 548; 451; 337; 219; 119; 47];
+  [770; 734; 688; 627; 549; 451; 338; 219; 119; 47];
+  [773; 736; 690; 628; 550; 452; 338; 219; 119; 47];
+  [775; 739; 692; 630; 551; 452; 338; 219; 119; 47];
+  [778; 741; 694; 632; 552; 453; 338; 219; 119; 47];
+  [780; 743; 696; 633; 553; 454; 339; 219; 119; 47];
+  [783; 746; 697; 635; 554; 454; 339; 219; 119; 47];
+  [785; 748; 699; 636; 555; 455; 339; 219; 119; 47];
+  [788; 750; 701; 638; 556; 455; 339; 219; 119; 47];
+  [790; 752; 703; 639; 557; 456; 339; 219; 119; 47];
+  [793; 755; 705; 641; 558; 457; 340; 219; 119; 47];
+  [795; 757; 707; 642; 559; 457; 340; 219; 119; 47];
+  [798; 759; 709; 644; 560; 458; 340; 219; 119; 47];
+  [800; 761; 711; 645; 561; 458; 340; 219; 119; 47];
+  [803; 763; 713; 646; 562; 459; 340; 219; 119; 47];
+  [805; 766; 714; 648; 563; 459; 341; 219; 119; 47];
+  [808; 768; 716; 649; 564; 460; 341; 219; 119; 47];
+  [810; 770; 718; 651; 565; 460; 341; 219; 119; 47];
+  [813; 772; 720; 652; 566; 461; 341; 219; 119; 47];
+  [815; 774; 722; 653; 567; 461; 341; 219; 119; 47];
+  [817; 776; 723; 655; 568; 462; 342; 219; 119; 47];
+  [820; 778; 725; 656; 569; 462; 342; 219; 119; 47];
+  [822; 780; 727; 658; 570; 463; 342; 219; 119; 47];
+  [825; 783; 729; 659; 571; 463; 342; 219; 119; 47];
+  [827; 785; 730; 660; 572; 464; 342; 219; 119; 47];
+  [829; 787; 732; 662; 573; 464; 342; 219; 119; 47];
+  [832; 789; 734; 663; 574; 465; 342; 219; 119; 47];
+  [834; 791; 736; 664; 574; 465; 343; 219; 119; 47];
+  [836; 793; 737; 666; 575; 466; 343; 219; 119; 47];
+  [838; 795; 739; 667; 576; 466; 343; 219; 119; 47];
+  [841; 797; 741; 668; 577; 466; 343; 219; 119; 47];
+  [843; 799; 742; 669; 578; 467; 343; 219; 119; 47];
+  [845; 801; 744; 671; 579; 467; 343; 219; 119; 47];
+  [848; 803; 746; 672; 580; 468; 343; 219; 119; 47];
+  [850; 805; 747; 673; 580; 468; 344; 219; 119; 47];
+  [852; 807; 749; 674; 581; 469; 344; 219; 119; 47];
+  [854; 809; 750; 676; 582; 469; 344; 219; 119; 47];
+  [856; 811; 752; 677; 583; 469; 344; 219; 119; 47];
+  [859; 813; 754; 678; 584; 470; 344; 219; 119; 47];
+  [861; 815; 755; 679; 584; 470; 344; 219; 119; 47];
+  [863; 816; 757; 680; 585; 471; 344; 219; 119; 47];
+  [865; 818; 758; 682; 586; 471; 344; 219; 119; 47];
+  [867; 820; 760; 683; 587; 471; 345; 219; 119; 47];
+  [870; 822; 762; 684; 588; 472; 345; 219; 119; 47];
+  [872; 824; 763; 685; 588; 472; 345; 219; 119; 47];
+  [874; 826; 765; 686; 589; 473; 345; 219; 119; 47];
+  [876; 828; 766; 687; 590; 473; 345; 219; 119; 47];
+  [878; 830; 768; 689; 590; 473; 345; 219; 119; 47];
+  [880; 831; 769; 690; 591; 474; 345; 220; 119; 47];
+  [882; 833; 771; 691; 592; 474; 345; 220; 119; 47];
+  [884; 835; 772; 692; 593; 474; 345; 220; 119; 47];
+  [886; 837; 774; 693; 593; 475; 346; 220; 119; 47];
+  [889; 839; 775; 694; 594; 475; 346; 220; 119; 47];
+  [891; 840; 777; 695; 595; 475; 346; 220; 119; 47];
+  [893; 842; 778; 696; 595; 476; 346; 220; 119; 47];
+  [895; 844; 779; 697; 596; 476; 346; 220; 119; 47];
+  [897; 846; 781; 698; 597; 476; 346; 220; 119; 47];
+  [899; 847; 782; 699; 597; 477; 346; 220; 119; 47];
+  [901; 849; 784; 701; 598; 477; 346; 220; 119; 47];
+  [903; 851; 785; 702; 599; 477; 346; 220; 119; 47];
+  [905; 853; 787; 703; 599; 478; 346; 220; 119; 47];
+  [907; 854; 788; 704; 600; 478; 346; 220; 119; 47];
+  [909; 856; 789; 705; 601; 478; 347; 220; 119; 47];
+  [911; 858; 791; 706; 601; 478; 347; 220; 119; 47];
+  [913; 859; 792; 707; 602; 479; 347; 220; 119; 47];
+  [915; 861; 793; 708; 603; 479; 347; 220; 119; 47];
+  [917; 863; 795; 709; 603; 479; 347; 220; 119; 47];
+  [918; 864; 796; 710; 604; 480; 347; 220; 119; 47];
+  [920; 866; 797; 711; 604; 480; 347; 220; 119; 47];
+  [922; 868; 799; 712; 605; 480; 347; 220; 119; 47];
+  [924; 869; 800; 713; 606; 480; 347; 220; 119; 47];
+  [926; 871; 801; 713; 606; 481; 347; 220; 119; 47];
+  [928; 873; 803; 714; 607; 481; 347; 220; 119; 47];
+  [930; 874; 804; 715; 607; 481; 347; 220; 119; 47];
+  [932; 876; 805; 716; 608; 481; 347; 220; 119; 47];
+  [934; 877; 807; 717; 608; 482; 347; 220; 119; 47];
+  [935; 879; 808; 718; 609; 482; 348; 220; 119; 47];
+  [937; 881; 809; 719; 610; 482; 348; 220; 119; 47];
+  [939; 882; 810; 720; 610; 483; 348; 220; 119; 47];
+  [941; 884; 812; 721; 611; 483; 348; 220; 119; 47];
+  [943; 885; 813; 722; 611; 483; 348; 220; 119; 47];
+  [945; 887; 814; 723; 612; 483; 348; 220; 119; 47];
+  [946; 888; 815; 724; 612; 483; 348; 220; 119; 47];
+  [948; 890; 817; 724; 613; 484; 348; 220; 119; 47];
+  [950; 891; 818; 725; 613; 484; 348; 220; 119; 47];
+  [952; 893; 819; 726; 614; 484; 348; 220; 119; 47];
+  [954; 894; 820; 727; 614; 484; 348; 220; 119; 47];
+  [955; 896; 821; 728; 615; 485; 348; 220; 119; 47];
+  [957; 897; 823; 729; 615; 485; 348; 220; 119; 47];
+  [959; 899; 824; 730; 616; 485; 348; 220; 119; 47];
+  [961; 900; 825; 730; 616; 485; 348; 220; 119; 47];
+  [962; 902; 826; 731; 617; 485; 348; 220; 119; 47];
+  [964; 903; 827; 732; 617; 486; 348; 220; 119; 47];
+  [966; 905; 828; 733; 618; 486; 348; 220; 119; 47];
+  [967; 906; 829; 734; 618; 486; 349; 220; 119; 47];
+  [969; 908; 831; 734; 619; 486; 349; 220; 119; 47];
+  [971; 909; 832; 735; 619; 486; 349; 220; 119; 47];
+  [973; 910; 833; 736; 620; 487; 349; 220; 119; 47];
+  [974; 912; 834; 737; 620; 487; 349; 220; 119; 47];
+  [976; 913; 835; 738; 621; 487; 349; 220; 119; 47];
+  [978; 915; 836; 738; 621; 487; 349; 220; 119; 47];
+  [979; 916; 837; 739; 622; 487; 349; 220; 119; 47];
+  [981; 917; 838; 740; 622; 488; 349; 220; 119; 47];
+  [982; 919; 839; 741; 622; 488; 349; 220; 119; 47];
+  [984; 920; 840; 741; 623; 488; 349; 220; 119; 47];
+  [986; 922; 842; 742; 623; 488; 349; 220; 119; 47];
+  [987; 923; 843; 743; 624; 488; 349; 220; 119; 47];
+  [989; 924; 844; 744; 624; 489; 349; 220; 119; 47];
+  [991; 926; 845; 744; 625; 489; 349; 220; 119; 47];
+  [992; 927; 846; 745; 625; 489; 349; 220; 119; 47];
+  [994; 928; 847; 746; 625; 489; 349; 220; 119; 47];
+  [995; 930; 848; 746; 626; 489; 349; 220; 119; 47];
+  [997; 931; 849; 747; 626; 489; 349; 220; 119; 47];
+  [998; 932; 850; 748; 627; 490; 349; 220; 119; 47];
+  [1000; 934; 851; 749; 627; 490; 349; 220; 119; 47]
+].
+
+Definition dl2002_cell (b : balls) (w : wickets) : resource :=
+  nth w (nth (Nat.min b 300) dl2002_data []) 0.
+
+(* Boolean certificates over the whole grid, discharged by vm_compute. *)
+
+Definition dl2002_shape_ok : bool :=
+  (length dl2002_data =? 301) &&
+  forallb (fun r => length r =? 10) dl2002_data.
+
+Definition dl2002_balls_mono_ok : bool :=
+  forallb (fun b => forallb (fun w => dl2002_cell b w <=? dl2002_cell (S b) w)
+                            (seq 0 10))
+          (seq 0 300).
+
+Definition dl2002_wickets_mono_ok : bool :=
+  forallb (fun b => forallb (fun w => dl2002_cell b (S w) <=? dl2002_cell b w)
+                            (seq 0 9))
+          (seq 0 301).
+
+Lemma dl2002_shape_true : dl2002_shape_ok = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma dl2002_balls_mono_true : dl2002_balls_mono_ok = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma dl2002_wickets_mono_true : dl2002_wickets_mono_ok = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Transcription tripwire: the sum of all 3010 cells, computed in binary N
+   so the certified total stays small as a term. *)
+Example dl2002_checksum :
+  fold_right N.add 0%N
+    (map (fun r => N.of_nat (fold_right Nat.add 0 r)) dl2002_data) = 1108540%N.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Reflection bridges from the boolean certificates to the record laws. *)
+
+Lemma dl2002_length : length dl2002_data = 301.
+Proof.
+  assert (H := dl2002_shape_true).
+  unfold dl2002_shape_ok in H.
+  apply andb_true_iff in H. destruct H as [H _].
+  apply Nat.eqb_eq in H. exact H.
+Qed.
+
+Lemma dl2002_row_length :
+  forall i, i < 301 -> length (nth i dl2002_data []) = 10.
+Proof.
+  intros i Hi.
+  assert (H := dl2002_shape_true).
+  unfold dl2002_shape_ok in H.
+  apply andb_true_iff in H. destruct H as [_ H].
+  rewrite forallb_forall in H.
+  apply Nat.eqb_eq.
+  apply H.
+  apply nth_In.
+  rewrite dl2002_length. exact Hi.
+Qed.
+
+Lemma dl2002_cell_high_wickets :
+  forall b w, 10 <= w -> dl2002_cell b w = 0.
+Proof.
+  intros b w Hw.
+  unfold dl2002_cell.
+  apply nth_overflow.
+  rewrite dl2002_row_length.
+  - exact Hw.
+  - lia.
+Qed.
+
+Lemma dl2002_cell_no_balls : forall w, dl2002_cell 0 w = 0.
+Proof.
+  intros w.
+  unfold dl2002_cell.
+  destruct w as [|[|[|[|[|[|[|[|[|[|w]]]]]]]]]]; try reflexivity.
+  apply nth_overflow. simpl. lia.
+Qed.
+
+Lemma dl2002_cell_step_b :
+  forall b w, dl2002_cell b w <= dl2002_cell (S b) w.
+Proof.
+  intros b w.
+  destruct (le_lt_dec 10 w) as [Hw|Hw].
+  { rewrite (dl2002_cell_high_wickets b w Hw).
+    rewrite (dl2002_cell_high_wickets (S b) w Hw).
+    lia. }
+  destruct (le_lt_dec 300 b) as [Hb|Hb].
+  { unfold dl2002_cell.
+    replace (Nat.min b 300) with 300 by lia.
+    replace (Nat.min (S b) 300) with 300 by lia.
+    lia. }
+  assert (H := dl2002_balls_mono_true).
+  unfold dl2002_balls_mono_ok in H.
+  rewrite forallb_forall in H.
+  specialize (H b).
+  assert (Hin : In b (seq 0 300)) by (apply in_seq; lia).
+  specialize (H Hin).
+  rewrite forallb_forall in H.
+  specialize (H w).
+  assert (Hin2 : In w (seq 0 10)) by (apply in_seq; lia).
+  specialize (H Hin2).
+  apply Nat.leb_le in H. exact H.
+Qed.
+
+Lemma dl2002_cell_mono_b :
+  forall b1 b2 w, b1 <= b2 -> dl2002_cell b1 w <= dl2002_cell b2 w.
+Proof.
+  intros b1 b2 w Hle.
+  induction Hle as [|m Hle IH].
+  - lia.
+  - eapply Nat.le_trans; [exact IH | apply dl2002_cell_step_b].
+Qed.
+
+Lemma dl2002_cell_step_w :
+  forall b w, dl2002_cell b (S w) <= dl2002_cell b w.
+Proof.
+  intros b w.
+  destruct (le_lt_dec 9 w) as [Hw|Hw].
+  { rewrite (dl2002_cell_high_wickets b (S w)) by lia. lia. }
+  assert (H := dl2002_wickets_mono_true).
+  unfold dl2002_wickets_mono_ok in H.
+  rewrite forallb_forall in H.
+  specialize (H (Nat.min b 300)).
+  assert (Hin : In (Nat.min b 300) (seq 0 301)) by (apply in_seq; lia).
+  specialize (H Hin).
+  rewrite forallb_forall in H.
+  specialize (H w).
+  assert (Hin2 : In w (seq 0 9)) by (apply in_seq; lia).
+  specialize (H Hin2).
+  apply Nat.leb_le in H.
+  unfold dl2002_cell in H |- *.
+  replace (Nat.min (Nat.min b 300) 300) with (Nat.min b 300) in H by lia.
+  exact H.
+Qed.
+
+Lemma dl2002_cell_mono_w :
+  forall b w1 w2, w1 <= w2 -> dl2002_cell b w2 <= dl2002_cell b w1.
+Proof.
+  intros b w1 w2 Hle.
+  induction Hle as [|m Hle IH].
+  - lia.
+  - eapply Nat.le_trans; [apply dl2002_cell_step_w | exact IH].
+Qed.
+
+(* The published per-ball table as a lawful BallResourceTable, at the
+   10000 = 100.0% scale of the record interface. *)
+
+Definition dl_std_ball_lookup (b : balls) (w : wickets) : scaled_resource :=
+  dl2002_cell b w * 10.
+
+Lemma dl_std_ball_mono :
+  forall b1 b2 w, b1 <= b2 ->
+    dl_std_ball_lookup b1 w <= dl_std_ball_lookup b2 w.
+Proof.
+  intros. unfold dl_std_ball_lookup.
+  apply Nat.mul_le_mono_r, dl2002_cell_mono_b. assumption.
+Qed.
+
+Lemma dl_std_ball_wickets_mono :
+  forall b w1 w2, w1 <= w2 ->
+    dl_std_ball_lookup b w2 <= dl_std_ball_lookup b w1.
+Proof.
+  intros. unfold dl_std_ball_lookup.
+  apply Nat.mul_le_mono_r, dl2002_cell_mono_w. assumption.
+Qed.
+
+Lemma dl_std_ball_allout : forall b, dl_std_ball_lookup b 10 = 0.
+Proof.
+  intros b. unfold dl_std_ball_lookup.
+  rewrite dl2002_cell_high_wickets by lia. reflexivity.
+Qed.
+
+Lemma dl_std_ball_no_balls : forall w, dl_std_ball_lookup 0 w = 0.
+Proof.
+  intros w. unfold dl_std_ball_lookup.
+  rewrite dl2002_cell_no_balls. reflexivity.
+Qed.
+
+Lemma dl_std_ball_full_odi : dl_std_ball_lookup 300 0 = 10000.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition DLStandardBallTable : BallResourceTable := {|
+  ball_lookup := dl_std_ball_lookup;
+  ball_table_mono := dl_std_ball_mono;
+  ball_table_wickets_mono := dl_std_ball_wickets_mono;
+  ball_table_allout := dl_std_ball_allout;
+  ball_table_no_balls := dl_std_ball_no_balls;
+  ball_table_full_odi := dl_std_ball_full_odi
+|}.
+
+(* The published per-over table is the over-boundary restriction of the
+   per-ball data (the single-sheet over-by-over version of the table). *)
+
+Definition dl_std_over_lookup (u : overs) (w : wickets) : resource :=
+  dl2002_cell (u * 6) w.
+
+Lemma dl_std_over_mono :
+  forall u1 u2 w, u1 <= u2 ->
+    dl_std_over_lookup u1 w <= dl_std_over_lookup u2 w.
+Proof.
+  intros. unfold dl_std_over_lookup.
+  apply dl2002_cell_mono_b. lia.
+Qed.
+
+Lemma dl_std_over_wickets_mono :
+  forall u w1 w2, w1 <= w2 ->
+    dl_std_over_lookup u w2 <= dl_std_over_lookup u w1.
+Proof.
+  intros. unfold dl_std_over_lookup.
+  apply dl2002_cell_mono_w. assumption.
+Qed.
+
+Lemma dl_std_over_allout : forall u, dl_std_over_lookup u 10 = 0.
+Proof.
+  intros u. unfold dl_std_over_lookup.
+  apply dl2002_cell_high_wickets. lia.
+Qed.
+
+Lemma dl_std_over_no_overs : forall w, dl_std_over_lookup 0 w = 0.
+Proof.
+  intros w. unfold dl_std_over_lookup.
+  apply dl2002_cell_no_balls.
+Qed.
+
+Lemma dl_std_over_full_odi : dl_std_over_lookup 50 0 = 1000.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition DLStandardTable : ResourceTable := {|
+  lookup := dl_std_over_lookup;
+  table_overs_mono := dl_std_over_mono;
+  table_wickets_mono := dl_std_over_wickets_mono;
+  table_allout := dl_std_over_allout;
+  table_no_overs := dl_std_over_no_overs;
+  table_full_odi := dl_std_over_full_odi
+|}.
+
+(* The over-floor ball table derived from the published over table; the
+   direct per-ball DLStandardBallTable is the faithful one. *)
+Definition DLStandardOverFloorBallTable : BallResourceTable :=
+  BallTableFromOvers DLStandardTable.
+
+(* Fidelity anchors against the published sheet. *)
+
+Example dl_std_45_overs : lookup DLStandardTable 45 0 = 950.
+Proof. vm_compute. reflexivity. Qed.
+
+Example dl_std_40_overs : lookup DLStandardTable 40 0 = 893.
+Proof. vm_compute. reflexivity. Qed.
+
+Example dl_std_30_overs_5_wkts : lookup DLStandardTable 30 5 = 447.
+Proof. vm_compute. reflexivity. Qed.
+
+Example dl_std_20_overs_2_wkts : lookup DLStandardTable 20 2 = 524.
+Proof. vm_compute. reflexivity. Qed.
+
+Example dl_std_10_overs_7_wkts : lookup DLStandardTable 10 7 = 179.
+Proof. vm_compute. reflexivity. Qed.
+
+Example dl_std_ball_13_6 : ball_lookup DLStandardBallTable 13 6 = 710.
+Proof. vm_compute. reflexivity. Qed.
+
+Example dl_std_ball_1_6 : ball_lookup DLStandardBallTable 1 6 = 60.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The published over table narrowly fails wicket-concavity: between 38
+   and 39 overs the w=7 column steps 219 -> 220 while the w=6 column is
+   flat at 345, a 0.1% rounding artifact. Linear interpolation therefore
+   cannot serve the published table (BallTableFromInterpolation requires
+   the concavity certificate); the per-ball table above is transcribed
+   directly instead. *)
+Example dl_standard_not_concave_in_wickets :
+  ~ table_concave_in_wickets DLStandardTable.
+Proof.
+  intro H.
+  assert (Hc := H 38 6 7 ltac:(lia)).
+  vm_compute in Hc.
+  lia.
+Qed.
+
+(******************************************************************************)
 (*               SECTION/VARIABLE REFACTOR DEMONSTRATION                       *)
 (******************************************************************************)
 
@@ -2913,9 +4056,18 @@ Section WithTable.
 
 End WithTable.
 
-(* After ending the section, tbl is generalized into each lemma. Check: *)
-Check s_resources_avail.
-Check s_resources_avail_mono_in_overs.
+(* After ending the section, tbl is generalized into each lemma. *)
+Example s_resources_avail_generalized :
+  forall (tbl : ResourceTable) (inn : InningsState),
+    s_resources_avail tbl inn = lookup tbl (overs_remaining inn) (inn_wickets inn).
+Proof. reflexivity. Qed.
+
+Example s_resources_avail_mono_generalized :
+  forall (tbl : ResourceTable) (inn1 inn2 : InningsState),
+    inn_wickets inn1 = inn_wickets inn2 ->
+    overs_remaining inn1 <= overs_remaining inn2 ->
+    s_resources_avail tbl inn1 <= s_resources_avail tbl inn2
+  := s_resources_avail_mono_in_overs.
 
 (******************************************************************************)
 (*               STERN PROFESSIONAL EDITION                                    *)
@@ -3226,57 +4378,72 @@ Import DLS.
 (*               WORKED EXAMPLE: 1992 SA vs ENG WORLD CUP SEMI-FINAL          *)
 (******************************************************************************)
 
-(* The infamous match that motivated the creation of the DL method.
-   England 252/6 in 45 overs. Rain interrupted South Africa's chase.
-   Original (pre-DL) "most productive overs" rule reset target to
-   22 off 1 ball — an impossible target. Under DL Standard Edition
-   the revision would be more reasonable. *)
+(* The match that motivated the method. Sydney, 22 March 1992: England
+   252/6 in 45 overs (the match was 45 overs per side from the start);
+   South Africa 231/6 with 13 balls remaining when rain stopped play.
+   Twelve balls were forfeited, leaving one. The Most Productive Overs
+   rule then in force revised the requirement to 21 runs off that ball
+   (the scoreboard notoriously showed 22). Under the published DL
+   Standard Edition table the computation below sets the target at 235:
+   four to win from the final ball. South Africa finished on 232. *)
 
-Definition match_1992 : MatchState := {|
-  match_format := ODI;
-  match_t1 := {|
-    inn_score := 252;
-    inn_wickets := 6;
-    inn_overs_faced := 45;
-    inn_balls_faced := 270;
-    inn_overs_allocated := 45;
-    inn_balls_allocated := 270;
-    inn_phase := Completed;
-    inn_powerplay := NoPowerplay
-  |};
-  match_t2 := {|
-    inn_score := 231;
-    inn_wickets := 6;
-    inn_overs_faced := 43;
-    inn_balls_faced := 258;
-    inn_overs_allocated := 43;
-    inn_balls_allocated := 258;
-    inn_phase := Completed;
-    inn_powerplay := NoPowerplay
-  |};
-  match_t1_interruptions := [];
-  match_t2_interruptions := [{|
-    int_at_overs := 0;
-    int_at_wickets := 6;
-    int_overs_lost := 0;
-    int_during_innings := 2
-  |}];
-  match_g50 := 245
+Definition england_1992 : DetailedInningsState := {|
+  det_score := 252;
+  det_wickets := 6;
+  det_balls_faced := 270;
+  det_balls_allocated := 270;
+  det_phase := Completed;
+  det_powerplay := NoPowerplay;
+  det_in_powerplay := false;
+  det_powerplay_balls_remaining := 0
 |}.
 
-Example match_1992_target_positive :
-  compute_target DummyTable match_1992 > 0.
-Proof. vm_compute. lia. Qed.
+(* Rain at 13 balls remaining, 6 wickets down; 12 balls lost. *)
+Definition sa_rain_1992 : BallInterruption := {|
+  bint_at_balls := 13;
+  bint_at_wickets := 6;
+  bint_balls_lost := 12;
+  bint_during_innings := 2;
+  bint_in_powerplay := false
+|}.
 
-(* Verify the match passes minimum-overs threshold *)
-Example match_1992_above_threshold :
-  min_overs_met match_1992 = true.
-Proof. reflexivity. Qed.
+(* Both sides were allocated 45 overs = 270 balls: 95.0% of full
+   resources on the published table. *)
+Example r1_1992 :
+  effective_ball_resources DLStandardBallTable
+    (ball_resources_at_start DLStandardBallTable 270) [] = 9500.
+Proof. vm_compute. reflexivity. Qed.
 
-(* And the chase was below par *)
-Example match_1992_completed_t2 :
-  is_complete (match_t2 match_1992) = true.
-Proof. reflexivity. Qed.
+(* The stoppage read 7.1% remaining (13 balls, 6 down) and resumption
+   0.6% (1 ball, 6 down): 6.5% of resources lost. *)
+Example resources_lost_1992 :
+  ball_resource_lost_by_interruption DLStandardBallTable sa_rain_1992 = 650.
+Proof. vm_compute. reflexivity. Qed.
+
+Example r2_1992 :
+  effective_ball_resources DLStandardBallTable
+    (ball_resources_at_start DLStandardBallTable 270) [sa_rain_1992] = 8850.
+Proof. vm_compute. reflexivity. Qed.
+
+(* T = floor(252 * 8850 / 9500) + 1 = 235. *)
+Example target_1992 :
+  ball_target_from_states DLStandardBallTable
+    england_1992 270 [] [sa_rain_1992] 245 = 235.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Four to win off the final ball, not twenty-one. *)
+Example needed_off_final_ball_1992 :
+  ball_target_from_states DLStandardBallTable
+    england_1992 270 [] [sa_rain_1992] 245 - 231 = 4.
+Proof. vm_compute. reflexivity. Qed.
+
+(* South Africa finished on 232: England win under the revised target. *)
+Example result_1992 :
+  determine_result
+    (ball_target_from_states DLStandardBallTable
+       england_1992 270 [] [sa_rain_1992] 245)
+    232 true true = Team1Wins.
+Proof. vm_compute. reflexivity. Qed.
 
 (******************************************************************************)
 (*               OCAML EXTRACTION                                              *)
@@ -3285,6 +4452,8 @@ Proof. reflexivity. Qed.
 End DLS_Extras.
 
 From Stdlib Require Extraction.
+
+Set Extraction Output Directory ".".
 
 Extraction Language OCaml.
 
@@ -3303,12 +4472,30 @@ Extract Constant Nat.eqb => "(=)".
 Extract Constant Nat.ltb => "(<)".
 Extract Constant Nat.leb => "(<=)".
 
-(* Extract the main DLS functions *)
+(* Extract the verified calculator surface: target and par formulae at both
+   scales, the match-level pipeline, the combined decision function, and
+   the verified tables (published DL Standard Edition per-ball and
+   per-over, rational-decay, separable ICC-style, dummy). *)
 Extraction "dls_extracted.ml"
   DLS.revised_target
   DLS.par_score
+  DLS.ball_revised_target
+  DLS.ball_par_score
+  DLS.ball_target_from_states
+  DLS.ball_resource_lost_by_interruption
+  DLS.effective_ball_resources
+  DLS.ball_resources_at_start
   DLS.compute_target
+  DLS.compute_par
   DLS.compute_result
+  DLS.decide_match
   DLS.determine_result
-  DLS_Extras.match_1992
+  DLS.par_result
+  DLS.DLStandardBallTable
+  DLS.DLStandardTable
+  DLS.RationalDecayTable
+  DLS.ICCStandardTable
+  DLS.DummyTable
+  DLS_Extras.england_1992
+  DLS_Extras.sa_rain_1992
   DLS.ODI DLS.T20 DLS.TheHundred.

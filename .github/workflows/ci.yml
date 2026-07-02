@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fix workspace permissions for container user
+        run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          coq_version: '9.0'
+          ocaml_version: '4.14-flambda'
+          custom_script: |
+            startGroup "Build"
+              make
+            endGroup
+            startGroup "Kernel validation"
+              make validate
+            endGroup
+            startGroup "Extracted OCaml compiles"
+              make extracted
+            endGroup
