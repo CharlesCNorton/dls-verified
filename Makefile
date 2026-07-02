@@ -7,7 +7,11 @@ $(COQMAKEFILE): _CoqProject
 	rocq makefile -f _CoqProject -o $(COQMAKEFILE)
 
 validate: all
-	coqchk -silent -o -Q . "" dls
+	@if command -v coqchk >/dev/null 2>&1; then \
+		coqchk -silent -o -Q . "" dls; \
+	else \
+		rocq check -silent -o -Q . "" dls; \
+	fi
 
 extracted: all
 	ocamlc -c dls_extracted.mli dls_extracted.ml
