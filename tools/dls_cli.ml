@@ -83,7 +83,7 @@ let parse_rest rest =
 let resources_line label alloc ints =
   let base = DLS.ball_resources_at_start tbl alloc in
   let eff = DLS.effective_ball_resources tbl base ints in
-  Printf.printf "%s: allocation %d balls (%d overs%s), resources %s%s\n"
+  Printf.printf "%s: allocation %d balls (%d%s overs), resources %s%s\n"
     label alloc (alloc / 6) (if alloc mod 6 = 0 then "" else Printf.sprintf ".%d" (alloc mod 6))
     (pct eff)
     (if ints = [] then ""
