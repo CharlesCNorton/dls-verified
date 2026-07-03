@@ -579,6 +579,16 @@ Proof.
     lia.
 Qed.
 
+Theorem ball_revised_target_is_par_plus_one :
+  forall t1_score R1 R2 g50,
+    ball_revised_target t1_score R1 R2 g50 =
+    ball_par_score t1_score R1 R2 g50 + 1.
+Proof.
+  intros t1_score R1 R2 g50.
+  unfold ball_revised_target, ball_par_score.
+  destruct (R2 <? R1); reflexivity.
+Qed.
+
 Definition ball_target_from_states
   (tbl : BallResourceTable)
   (t1 : DetailedInningsState)
@@ -974,6 +984,17 @@ Proof.
   rewrite Ha, Hb.
   apply Nat.Div0.div_le_mono.
   apply Nat.mul_le_mono_l. exact Hle.
+Qed.
+
+(* Clause 5.5: the par is the target formula without the one run added. *)
+Theorem revised_target_is_par_plus_one :
+  forall t1_score R1 R2 g50,
+    revised_target t1_score R1 R2 g50 = par_score t1_score R1 R2 g50 + 1.
+Proof.
+  intros t1_score R1 R2 g50.
+  unfold revised_target, par_score,
+         revised_target_method1, revised_target_method2.
+  destruct (R2 <? R1); reflexivity.
 Qed.
 
 (******************************************************************************)
@@ -2556,6 +2577,79 @@ Proof. split; reflexivity. Qed.
 (* Clause 7.1.2: chasing 201, Team 2 are 115/4 with par 110 when the match is abandoned; Team 2 win by 5. *)
 Example ecb_example_7_1_2 : par_result 110 115 true = Team2Wins.
 Proof. reflexivity. Qed.
+
+Lemma par_result_never_abandoned :
+  forall par score min_met, par_result par score min_met <> Abandoned.
+Proof.
+  intros par score min_met.
+  unfold par_result.
+  destruct min_met; simpl;
+  repeat (destruct (_ <? _); simpl);
+  discriminate.
+Qed.
+
+Theorem decide_match_never_abandoned :
+  forall tbl m, decide_match tbl m <> Abandoned.
+Proof.
+  intros tbl m.
+  unfold decide_match.
+  destruct (negb (min_overs_met m)); [discriminate|].
+  destruct (ended_by_stoppage (inn_phase (match_t2 m))).
+  - apply par_result_never_abandoned.
+  - apply determine_result_never_abandoned.
+Qed.
+
+(* When Team 2's chase holds no further resources, the target is the terminal par plus the regulation one run. *)
+Theorem compute_target_par_terminal :
+  forall tbl m,
+    resources_available tbl (match_t2 m) = 0 ->
+    compute_target tbl m = compute_par tbl m + 1.
+Proof.
+  intros tbl m H.
+  unfold compute_target, target_from_states, compute_par,
+         resources_used, effective_resources, resources_at_start.
+  rewrite H, Nat.sub_0_r.
+  apply revised_target_is_par_plus_one.
+Qed.
+
+(* Soundness bundle over well-formed match states: the decision is total, sub-minimum matches yield no result, the target is positive, Team 2's resources partition, the terminal target-par link holds, and equal resources give score plus one. *)
+Theorem calculator_sound_under_validity :
+  forall tbl m,
+    valid_match m ->
+    effective_resources tbl
+      (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
+      (match_t1_interruptions m) > 0 ->
+    decide_match tbl m <> Abandoned /\
+    (min_overs_met m = false -> decide_match tbl m = NoResult) /\
+    compute_target tbl m >= 1 /\
+    resources_used tbl (match_t2 m) + resources_available tbl (match_t2 m) =
+      resources_at_start tbl (inn_overs_allocated (match_t2 m)) /\
+    (resources_available tbl (match_t2 m) = 0 ->
+       compute_target tbl m = compute_par tbl m + 1) /\
+    fair_result m tbl.
+Proof.
+  intros tbl m Hvalid HR1.
+  destruct Hvalid as (Hv1 & Hv2 & Hseq1 & Hseq2 & Hg50).
+  destruct Hv2 as (Hw2 & Hov2 & Halloc2 & Hballs2 & Hcoh2).
+  assert (Havail : resources_available tbl (match_t2 m) <=
+                   resources_at_start tbl (inn_overs_allocated (match_t2 m))).
+  { unfold resources_available, resources_at_start.
+    eapply Nat.le_trans.
+    - apply (table_wickets_mono tbl _ 0 (inn_wickets (match_t2 m))). lia.
+    - apply table_overs_mono. unfold overs_remaining. lia. }
+  repeat split.
+  - apply decide_match_never_abandoned.
+  - intro H. apply decide_match_below_min. exact H.
+  - unfold compute_target, target_from_states.
+    apply target_always_positive. exact HR1.
+  - apply resources_partition; assumption.
+  - intro H. apply compute_target_par_terminal. exact H.
+  - unfold fair_result. intro HR.
+    unfold compute_target, target_from_states.
+    rewrite HR.
+    apply equal_resources_fair_target.
+    lia.
+Qed.
 
 Definition min_balls_met_det (det : DetailedInningsState) (fmt : MatchFormat) : bool :=
   min_balls_for_result fmt <=? det_balls_faced det.
@@ -4279,6 +4373,229 @@ Qed.
 End DLS_Real.
 
 Close Scope R_scope.
+
+(******************************************************************************)
+(*               KERNEL-TO-EXPONENTIAL BRIDGE                                  *)
+(******************************************************************************)
+
+(* The computational rational-decay kernel tracks the exponential-decay law at its own integer parameters: exp_decay_approx lies within a one-unit floor slack of Z0 (1 - exp(-b u / 1000)) minus a Taylor remainder that is stated exactly. *)
+Module DLS_Bridge.
+Import DLS.
+
+Open Scope R_scope.
+
+Definition z0R (w : wickets) : R := INR (Z0_asymptotic w).
+
+Definition buR (w : wickets) (u : overs) : R := INR (decay_rate_scaled w * u).
+
+(* The exponential law at the kernel's parameters. *)
+Definition exponential_ideal (u : overs) (w : wickets) : R :=
+  z0R w * (1 - exp (- (buR w u / 1000))).
+
+(* The Taylor remainder separating the rational kernel from the exponential. *)
+Definition taylor_gap (u : overs) (w : wickets) : R :=
+  z0R w * ((buR w u / 1000) * (buR w u / 1000) / (1 + buR w u / 1000)).
+
+Lemma INR_1000 : INR 1000 = 1000.
+Proof. rewrite INR_IZR_INZ. reflexivity. Qed.
+
+Lemma Z0_asymptotic_le_1000 : forall w, (Z0_asymptotic w <= 1000)%nat.
+Proof.
+  intro w.
+  do 10 (destruct w as [|w]; [simpl; lia|]).
+  simpl. lia.
+Qed.
+
+Lemma one_plus_le_exp : forall x : R, 1 + x <= exp x.
+Proof.
+  intro x.
+  destruct (Req_dec x 0) as [->|Hx].
+  - rewrite exp_0. lra.
+  - left. apply exp_ineq1. exact Hx.
+Qed.
+
+Lemma exp_neg_lower : forall x : R, 1 - x <= exp (- x).
+Proof.
+  intro x.
+  pose proof (one_plus_le_exp (- x)).
+  lra.
+Qed.
+
+Lemma exp_neg_upper : forall x : R, 0 <= x -> exp (- x) * (1 + x) <= 1.
+Proof.
+  intros x Hx.
+  pose proof (one_plus_le_exp x) as He.
+  pose proof (exp_pos x) as Hp.
+  rewrite exp_Ropp.
+  apply Rmult_le_reg_l with (exp x); [exact Hp|].
+  rewrite <- Rmult_assoc, Rinv_r by lra.
+  lra.
+Qed.
+
+(* INR of a nat quotient, bracketed in multiplied form. *)
+Lemma INR_div_bounds :
+  forall a b : nat, (b <> 0)%nat ->
+    INR b * INR (a / b) <= INR a < INR b * (INR (a / b) + 1).
+Proof.
+  intros a b Hb.
+  pose proof (Nat.div_mod_eq a b) as Heq.
+  pose proof (Nat.mod_upper_bound a b Hb) as Hm.
+  apply (f_equal INR) in Heq.
+  rewrite plus_INR, mult_INR in Heq.
+  apply lt_INR in Hm.
+  pose proof (pos_INR (a mod b)) as Hm0.
+  split; nra.
+Qed.
+
+Lemma taylor_gap_nonneg : forall u w, 0 <= taylor_gap u w.
+Proof.
+  intros u w.
+  unfold taylor_gap, z0R, buR, Rdiv.
+  assert (HX : 0 <= INR (decay_rate_scaled w * u) * / 1000).
+  { apply Rmult_le_pos; [apply pos_INR|].
+    left. apply Rinv_0_lt_compat. lra. }
+  apply Rmult_le_pos; [apply pos_INR|].
+  apply Rmult_le_pos.
+  - apply Rmult_le_pos; exact HX.
+  - left. apply Rinv_0_lt_compat. lra.
+Qed.
+
+(* The kernel is bracketed by the exponential law within the floor slack and the Taylor remainder. *)
+Theorem exp_decay_approx_bounds :
+  forall u w,
+    exponential_ideal u w - 1 - taylor_gap u w <= INR (exp_decay_approx u w) <=
+    exponential_ideal u w + 1.
+Proof.
+  intros u w.
+  unfold exponential_ideal, taylor_gap, z0R, buR.
+  destruct (Nat.eqb_spec u 0) as [->|Hu].
+  - rewrite Nat.mul_0_r.
+    assert (Hk : exp_decay_approx 0%nat w = 0%nat).
+    { unfold exp_decay_approx. destruct (w =? 10); reflexivity. }
+    rewrite Hk.
+    change (INR 0) with 0.
+    replace (0 / 1000) with 0 by (unfold Rdiv; ring).
+    rewrite Ropp_0, exp_0.
+    replace (0 * 0 / (1 + 0)) with 0 by (unfold Rdiv; ring).
+    pose proof (pos_INR (Z0_asymptotic w)).
+    split; nra.
+  - assert (Hk : exp_decay_approx u w =
+        (Z0_asymptotic w *
+         (1000 - 1000 * 1000 / (1000 + decay_rate_scaled w * u)) / 1000)%nat).
+    { unfold exp_decay_approx.
+      rewrite (proj2 (Nat.eqb_neq u 0) Hu).
+      destruct (Nat.eqb_spec w 10) as [->|Hw]; reflexivity. }
+    rewrite Hk.
+    set (Z := INR (Z0_asymptotic w)) in *.
+    set (X := INR (decay_rate_scaled w * u) / 1000) in *.
+    set (T := exp (- X)) in *.
+    assert (HX0 : 0 <= X).
+    { unfold X, Rdiv. apply Rmult_le_pos; [apply pos_INR|].
+      left. apply Rinv_0_lt_compat. lra. }
+    assert (HZ0 : 0 <= Z) by apply pos_INR.
+    assert (HZ1000 : Z <= 1000).
+    { unfold Z. rewrite <- INR_1000. apply le_INR. apply Z0_asymptotic_le_1000. }
+    assert (HB : INR (decay_rate_scaled w * u) = 1000 * X).
+    { unfold X. field. }
+    set (d := (1000 + decay_rate_scaled w * u)%nat) in *.
+    set (q := ((1000 * 1000) / d)%nat) in *.
+    assert (Hd : (d <> 0)%nat) by (unfold d; lia).
+    assert (HdR : INR d = 1000 * (1 + X)).
+    { unfold d. rewrite plus_INR, INR_1000, HB. ring. }
+    assert (Hq1000 : (q <= 1000)%nat).
+    { unfold q. apply Nat.Div0.div_le_upper_bound.
+      assert (Hd1000 : (1000 <= d)%nat) by (unfold d; lia).
+      nia. }
+    pose proof (INR_div_bounds (1000 * 1000) d Hd) as Hqb.
+    fold q in Hqb.
+    rewrite mult_INR, INR_1000, HdR in Hqb.
+    set (Q := INR q) in *.
+    destruct Hqb as [Hq_lo Hq_hi].
+    assert (HQ0 : 0 <= Q) by apply pos_INR.
+    set (dec := (1000 - q)%nat) in *.
+    assert (HdecR : INR dec = 1000 - Q).
+    { unfold dec, Q. rewrite minus_INR by exact Hq1000.
+      now rewrite INR_1000. }
+    pose proof (INR_div_bounds (Z0_asymptotic w * dec) 1000 ltac:(lia)) as Hkb.
+    rewrite mult_INR, INR_1000 in Hkb.
+    fold Z in Hkb.
+    rewrite HdecR in Hkb.
+    destruct Hkb as [Hk_lo Hk_hi].
+    assert (HXpos : 0 < 1 + X) by lra.
+    set (Sx := / (1 + X)).
+    assert (HS1 : Sx * (1 + X) = 1) by (unfold Sx; field; lra).
+    assert (HSpos : 0 < Sx) by (unfold Sx; apply Rinv_0_lt_compat; lra).
+    assert (HQ_hi : Q <= 1000 * Sx).
+    { apply Rmult_le_reg_r with (1 + X); [exact HXpos|]. nra. }
+    assert (HQ_lo : 1000 * Sx - 1 < Q).
+    { apply Rmult_lt_reg_r with (1 + X); [exact HXpos|]. nra. }
+    assert (HT_lo : 1 - X <= T) by (unfold T; apply exp_neg_lower).
+    assert (HT_hi : T * (1 + X) <= 1) by (unfold T; apply exp_neg_upper; exact HX0).
+    assert (HTS : T <= Sx).
+    { apply Rmult_le_reg_r with (1 + X); [exact HXpos|]. nra. }
+    assert (Hring : Sx - 1 + X = X * X * Sx).
+    { assert (HH : Sx - 1 + X - X * X * Sx = (Sx * (1 + X) - 1) * (1 - X)) by ring.
+      rewrite HS1 in HH. lra. }
+    assert (Hgap : Z * (X * X / (1 + X)) = Z * X * X * Sx).
+    { unfold Sx, Rdiv. ring. }
+    rewrite Hgap.
+    split.
+    + assert (Ha : Q - 1000 * T <= 1000 * (X * X * Sx)).
+      { rewrite <- Hring. lra. }
+      pose proof (Rmult_le_compat_l Z _ _ HZ0 Ha) as Hmul.
+      nra.
+    + assert (Hab : 1000 * T - Q <= 1000 * Sx - Q) by lra.
+      pose proof (Rmult_le_compat_l Z _ _ HZ0 Hab) as H1.
+      assert (Hb0 : 0 <= 1000 * Sx - Q) by lra.
+      pose proof (Rmult_le_compat_r (1000 * Sx - Q) Z 1000 Hb0 HZ1000) as H2.
+      nra.
+Qed.
+
+(* Headline: the kernel tracks the exponential law within one unit plus the Taylor remainder. *)
+Theorem exp_decay_approx_tracks_exponential :
+  forall u w,
+    Rabs (INR (exp_decay_approx u w) - exponential_ideal u w) <=
+    1 + taylor_gap u w.
+Proof.
+  intros u w.
+  pose proof (exp_decay_approx_bounds u w) as [Hlo Hhi].
+  pose proof (taylor_gap_nonneg u w).
+  apply Rabs_le. lra.
+Qed.
+
+(* Transport to the normalized table at zero wickets, where the envelope coincides with the raw kernel. *)
+Theorem dls_lookup_tracks_exponential_w0 :
+  forall u, (u <= 50)%nat ->
+    1000 / 702 * (exponential_ideal u 0%nat - 1 - taylor_gap u 0%nat) - 1 <=
+    INR (dls_lookup u 0%nat) <=
+    1000 / 702 * (exponential_ideal u 0%nat + 1).
+Proof.
+  intros u Hu.
+  assert (Hdef : dls_lookup u 0%nat = ((exp_decay_approx u 0) * 1000 / 702)%nat).
+  { unfold dls_lookup. rewrite Nat.min_l by exact Hu. reflexivity. }
+  rewrite Hdef.
+  pose proof (INR_div_bounds ((exp_decay_approx u 0 * 1000)%nat) 702 ltac:(lia)) as Hb.
+  rewrite mult_INR, INR_1000 in Hb.
+  replace (INR 702) with 702 in Hb by (rewrite INR_IZR_INZ; reflexivity).
+  pose proof (exp_decay_approx_bounds u 0%nat) as [Hlo Hhi].
+  pose proof (taylor_gap_nonneg u 0%nat).
+  destruct Hb as [Hb_lo Hb_hi].
+  split.
+  - apply Rmult_le_reg_r with 702; [lra|].
+    replace ((1000 / 702 * (exponential_ideal u 0%nat - 1 - taylor_gap u 0%nat) - 1) * 702)
+      with (1000 * (exponential_ideal u 0%nat - 1 - taylor_gap u 0%nat) - 702)
+      by field.
+    nra.
+  - apply Rmult_le_reg_r with 702; [lra|].
+    replace (1000 / 702 * (exponential_ideal u 0%nat + 1) * 702)
+      with (1000 * (exponential_ideal u 0%nat + 1))
+      by field.
+    nra.
+Qed.
+
+Close Scope R_scope.
+
+End DLS_Bridge.
 
 (* Pluggable resource-table interface *)
 Module Type DLS_TABLE_SIG.

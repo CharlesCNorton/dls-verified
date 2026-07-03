@@ -19,7 +19,10 @@ exact in `nat` at scale x10. The table's laws — monotone in balls
 remaining, antitone in wickets lost, zero rows, 100% at a full innings —
 are certified by `vm_compute` boolean sweeps over the entire grid and
 lifted to unbounded indices by reflection. A checksum over all 3010
-cells pins the transcription. The per-over sheet (`DLStandardTable`) is
+cells pins the transcription, and `tools/diff_table.py` diffs every
+cell mechanically against the published table extracted from a
+regulations PDF (verified against the ICC methodology document:
+3010/3010 cells, zero mismatches). The per-over sheet (`DLStandardTable`) is
 the over-boundary restriction of the per-ball data
 (`DLStandardBallTable`); both are lawful instances of dependently-typed
 table records that carry their monotonicity and boundary laws as fields,
@@ -41,7 +44,13 @@ chases, with agreement theorems for each regime and the par trichotomy
 proven. The ball-level pipeline (`ball_revised_target`,
 `ball_target_from_states`, `ball_par_from_states`) works at the table's
 10000-scale, with theorems that it agrees with the over-level formulae
-on corresponding inputs.
+on corresponding inputs. The target is proven to be the par plus one at
+both scales (clause 5.5's "without the one run added"), and a soundness
+bundle over well-formed match states ties the calculator to the
+validity layer: the decision is total, sub-minimum matches yield no
+result, targets are positive, Team 2's used and available resources
+partition their allocation, a resource-exhausted chase meets its
+terminal par plus one, and equal resources give score plus one.
 
 **Fairness properties.** Targets are positive; equal resources give
 target S+1; targets and par scores are monotone in Team 2's resources
@@ -83,6 +92,11 @@ finished on 232: `result_1992` proves Team 1 wins.
   symbolic monotonicity proofs, quarantined in its own module (the only
   part of the development that inherits the classical axioms of the
   `Reals` library).
+- `DLS_Bridge`: the analytic-computational link, proving that
+  `exp_decay_approx` tracks the exponential law Z0 (1 - exp(-b u/1000))
+  at its own integer parameters within one unit of floor slack plus an
+  exactly stated Taylor remainder, transported to the normalized table
+  at zero wickets.
 
 ## Building
 
