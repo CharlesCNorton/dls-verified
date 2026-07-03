@@ -1,9 +1,43 @@
 
 val negb : bool -> bool
 
-val fst : ('a1*'a2) -> 'a1
 
 
+type uint =
+| Nil
+| D0 of uint
+| D1 of uint
+| D2 of uint
+| D3 of uint
+| D4 of uint
+| D5 of uint
+| D6 of uint
+| D7 of uint
+| D8 of uint
+| D9 of uint
+
+type uint0 =
+| Nil0
+| D10 of uint0
+| D11 of uint0
+| D12 of uint0
+| D13 of uint0
+| D14 of uint0
+| D15 of uint0
+| D16 of uint0
+| D17 of uint0
+| D18 of uint0
+| D19 of uint0
+| Da of uint0
+| Db of uint0
+| Dc of uint0
+| Dd of uint0
+| De of uint0
+| Df of uint0
+
+type uint1 =
+| UIntDecimal of uint
+| UIntHexadecimal of uint0
 
 val add : int -> int -> int
 
@@ -17,7 +51,21 @@ val leb : int -> int -> bool
 
 val ltb : int -> int -> bool
 
-val divmod : int -> int -> int -> int -> int*int
+val tail_add : int -> int -> int
+
+val tail_addmul : int -> int -> int -> int
+
+val tail_mul : int -> int -> int
+
+val of_uint_acc : uint -> int -> int
+
+val of_uint : uint -> int
+
+val of_hex_uint_acc : uint0 -> int -> int
+
+val of_hex_uint : uint0 -> int
+
+val of_num_uint : uint1 -> int
 
 val div : int -> int -> int
 
@@ -27,6 +75,27 @@ module Nat :
  end
 
 val nth : int -> 'a1 list -> 'a1 -> 'a1
+
+type positive =
+| XI of positive
+| XO of positive
+| XH
+
+type n =
+| N0
+| Npos of positive
+
+module Pos :
+ sig
+  val iter_op : ('a1 -> 'a1 -> 'a1) -> positive -> 'a1 -> 'a1
+
+  val to_nat : positive -> int
+ end
+
+module N :
+ sig
+  val to_nat : n -> int
+ end
 
 module DLS :
  sig
@@ -111,9 +180,15 @@ module DLS :
 
   val det_score : coq_DetailedInningsState -> runs
 
+  val det_wickets : coq_DetailedInningsState -> wickets
+
+  val det_balls_faced : coq_DetailedInningsState -> balls
+
   val det_balls_allocated : coq_DetailedInningsState -> balls
 
   val overs_remaining : coq_InningsState -> overs
+
+  val det_balls_remaining : coq_DetailedInningsState -> balls
 
   val is_complete : coq_InningsState -> bool
 
@@ -122,6 +197,12 @@ module DLS :
   val resources_used : coq_ResourceTable -> coq_InningsState -> resource
 
   val resources_at_start : coq_ResourceTable -> overs -> resource
+
+  val ball_resources_available :
+    coq_BallResourceTable -> coq_DetailedInningsState -> scaled_resource
+
+  val ball_resources_used :
+    coq_BallResourceTable -> coq_DetailedInningsState -> scaled_resource
 
   val ball_resources_at_start :
     coq_BallResourceTable -> balls -> scaled_resource
@@ -189,6 +270,15 @@ module DLS :
     coq_BallResourceTable -> coq_DetailedInningsState -> balls ->
     coq_BallInterruption list -> coq_BallInterruption list -> int -> runs
 
+  val ball_resources_used_net :
+    coq_BallResourceTable -> coq_DetailedInningsState -> coq_BallInterruption
+    list -> scaled_resource
+
+  val ball_par_from_states :
+    coq_BallResourceTable -> coq_DetailedInningsState ->
+    coq_DetailedInningsState -> coq_BallInterruption list ->
+    coq_BallInterruption list -> int -> runs
+
   type coq_MatchResult =
   | Team1Wins
   | Team2Wins
@@ -255,7 +345,7 @@ module DLS :
 
   val coq_ICCStandardTable : coq_ResourceTable
 
-  val dl2002_data : int list list
+  val dl2002_data : n list list
 
   val dl2002_cell : balls -> wickets -> resource
 

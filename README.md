@@ -25,17 +25,23 @@ the over-boundary restriction of the per-ball data
 table records that carry their monotonicity and boundary laws as fields,
 so every downstream theorem holds for any lawful table.
 
-**The regulation formulae.** `revised_target` implements clauses 5.6 of
+**The regulation formulae.** `revised_target` implements clause 5.6 of
 the ECB regulations exactly (floor division is the regs' "ignoring any
 figures after the decimal point"): scale down by the resource ratio when
-Team 2 has fewer resources, inflate by G50 when it has more, one run
-added. `par_score` and `par_result` implement clause 5.5, and
-`decide_match` dispatches between target and par exactly as the
-regulations prescribe for completed versus terminated chases, with
-agreement theorems for each regime and the par trichotomy proven. The
-ball-level pipeline (`ball_revised_target`, `ball_target_from_states`)
-works at the table's 10000-scale, with theorems that it agrees with the
-over-level formulae on corresponding inputs.
+Team 2 has fewer resources, inflate by the G50 share of the excess when
+it has more, one run added; a `vm_compute` example replays the clause's
+arithmetic on published table values. `par_score` and `par_result`
+implement clause 5.5 with its accounting (resources lost to Team 2
+suspensions are neither used nor available), `determine_result` decides
+completed chases at the clause 2 boundary (the target is the minimum
+winning score; one short ties, with the regulations' example 7.1.1
+transcribed), and `decide_match` dispatches between target and par
+exactly as the regulations prescribe for completed versus terminated
+chases, with agreement theorems for each regime and the par trichotomy
+proven. The ball-level pipeline (`ball_revised_target`,
+`ball_target_from_states`, `ball_par_from_states`) works at the table's
+10000-scale, with theorems that it agrees with the over-level formulae
+on corresponding inputs.
 
 **Fairness properties.** Targets are positive; equal resources give
 target S+1; targets and par scores are monotone in Team 2's resources
@@ -86,9 +92,13 @@ Requires Rocq 9.0 (opam packages `rocq-core`, `rocq-stdlib`).
 make            # compile dls.v, regenerate dls_extracted.ml
 make validate   # coqchk kernel validation
 make extracted  # typecheck the extracted OCaml
+make tools      # build the command-line calculator and test suite
+make test       # run the property-based tests against the extraction
+make js         # compile the calculator to JavaScript (needs js_of_ocaml)
 ```
 
-CI runs all three on `coq_version: 9.0`.
+CI builds, kernel-validates, typechecks the extraction, and runs the
+property tests on `coq_version: 9.0`.
 
 ## Using the extracted calculator
 
@@ -105,8 +115,47 @@ let t   = DLS.ball_target_from_states tbl DLS_Extras.england_1992
 (* t = 235 *)
 ```
 
-`nat` extracts to `int` with truncated subtraction and guarded
-division, matching the Coq semantics on all cricket-scale inputs.
+`nat` extracts to `int` with native arithmetic (truncated subtraction,
+guarded division), matching the Coq semantics on all cricket-scale
+inputs; the published table is transcribed in binary `N`, so its 3010
+literals stay logarithmic in the extracted module.
+
+## Command-line calculator
+
+`make tools` builds `tools/dls`, a front-end in which every printed
+number comes from the extracted verified functions:
+
+- `dls target` and `dls par` — clause 5.6 targets and clause 5.5 pars
+  for arbitrary match states, interruptions given as
+  `--t1-int`/`--t2-int AT:W:LOST` (balls remaining, wickets, balls
+  removed).
+- `dls sheet` — the umpires' par sheet: par at the end of every over
+  for each wickets-lost column, plain text or `--csv`. Where scorers
+  historically misread printed sheets (Durban 2003), this one is
+  generated from the certified table.
+- `dls track` — live ball-by-ball par from stdin.
+- `dls oracle N SEED` — a reproducible differential-testing corpus:
+  random match states with reference targets and pars as JSONL, for
+  diffing any third-party DLS implementation against the verified
+  semantics. The stream is bit-identical between the native build and
+  the js_of_ocaml build.
+- `dls sensitivity N SEED` — the same reduced matches run through the
+  published, rational-decay, and separable tables, quantifying how much
+  adjudication depends on model choice.
+- `dls replay` — certified counterfactuals for every rain-affected
+  match of the 1992 World Cup against the Most Productive Overs rule
+  then in force (three results flip: Australia v India and South Africa
+  v Pakistan at Brisbane, and India v Zimbabwe at Hamilton), plus the
+  1996 finding that no innings was cut mid-match.
+
+`make test` runs `tools/props`, the proven theorems replayed as
+property-based tests (target positivity, R2 monotonicity, equal
+resources give score plus one, par is the target less one, the scale
+agreement, the completed-chase boundary, the table laws, and the
+published anchors); rebind its `Impl` module to test another
+implementation against the machine-checked semantics. `make js`
+compiles the calculator to a single self-contained `tools/dls.js` for
+node or a scorer's phone.
 
 ## Scope
 

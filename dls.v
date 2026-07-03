@@ -472,7 +472,7 @@ Definition revised_target_method1
 
 Definition revised_target_method2
   (t1_score : runs) (R1 R2 : resource) (g50 : nat) : runs :=
-  t1_score + g50 * (R2 - R1) / 100 + 1.
+  t1_score + g50 * (R2 - R1) / 1000 + 1.
 
 Definition revised_target
   (t1_score : runs) (R1 R2 : resource) (g50 : nat) : runs :=
@@ -486,7 +486,7 @@ Definition par_score
   if R2_used <? R1 then
     t1_score * R2_used / R1
   else
-    t1_score + g50 * (R2_used - R1) / 100.
+    t1_score + g50 * (R2_used - R1) / 1000.
 
 Definition target_from_states
   (tbl : ResourceTable)
@@ -502,24 +502,21 @@ Definition target_from_states
 (*                     BALL-LEVEL TARGET CALCULATIONS                         *)
 (******************************************************************************)
 
-(* The ball-level pipeline works at the 10000 = 100.0% scale of
-   BallResourceTable, so the G50 share divides by 1000 where the over-level
-   formula divides by 100. The agreement theorems show that the two scales
-   compute identical targets on corresponding inputs. *)
+(* Clause 5.6 divides the G50 share by 100 over percentages, hence by 1000 at the over-level 1000 = 100.0% scale and by 10000 at the ball-level 10000 scale; the agreement theorems relate the two. *)
 
 Definition ball_revised_target
   (t1_score : runs) (R1 R2 : scaled_resource) (g50 : nat) : runs :=
   if R2 <? R1 then
     t1_score * R2 / R1 + 1
   else
-    t1_score + g50 * (R2 - R1) / 1000 + 1.
+    t1_score + g50 * (R2 - R1) / 10000 + 1.
 
 Definition ball_par_score
   (t1_score : runs) (R1 R2_used : scaled_resource) (g50 : nat) : runs :=
   if R2_used <? R1 then
     t1_score * R2_used / R1
   else
-    t1_score + g50 * (R2_used - R1) / 1000.
+    t1_score + g50 * (R2_used - R1) / 10000.
 
 Lemma div_scale_cancel :
   forall a b k, k <> 0 -> (k * a) / (k * b) = a / b.
@@ -550,10 +547,10 @@ Proof.
   - assert (E10 : (10 * R2 <? 10 * R1) = false).
     { apply Nat.ltb_ge. apply Nat.ltb_ge in E. lia. }
     rewrite E10.
-    assert (Hd : g50 * (10 * R2 - 10 * R1) / 1000 = g50 * (R2 - R1) / 100).
+    assert (Hd : g50 * (10 * R2 - 10 * R1) / 10000 = g50 * (R2 - R1) / 1000).
     { replace (10 * R2 - 10 * R1) with (10 * (R2 - R1)) by lia.
       replace (g50 * (10 * (R2 - R1))) with (10 * (g50 * (R2 - R1))) by nia.
-      change 1000 with (10 * 100).
+      change 10000 with (10 * 1000).
       apply div_scale_cancel. lia. }
     lia.
 Qed.
@@ -574,10 +571,10 @@ Proof.
   - assert (E10 : (10 * R2u <? 10 * R1) = false).
     { apply Nat.ltb_ge. apply Nat.ltb_ge in E. lia. }
     rewrite E10.
-    assert (Hd : g50 * (10 * R2u - 10 * R1) / 1000 = g50 * (R2u - R1) / 100).
+    assert (Hd : g50 * (10 * R2u - 10 * R1) / 10000 = g50 * (R2u - R1) / 1000).
     { replace (10 * R2u - 10 * R1) with (10 * (R2u - R1)) by lia.
       replace (g50 * (10 * (R2u - R1))) with (10 * (g50 * (R2u - R1))) by nia.
-      change 1000 with (10 * 100).
+      change 10000 with (10 * 1000).
       apply div_scale_cancel. lia. }
     lia.
 Qed.
@@ -593,6 +590,34 @@ Definition ball_target_from_states
   let R2 := effective_ball_resources tbl
               (ball_resources_at_start tbl t2_allocated_balls) t2_ints in
   ball_revised_target (det_score t1) R1 R2 g50.
+
+(* Ball-level par with clause 5.5 accounting: resources lost to Team 2 suspensions are excluded from the used total. *)
+Definition ball_resources_used_net
+  (tbl : BallResourceTable) (det : DetailedInningsState)
+  (ints : list BallInterruption) : scaled_resource :=
+  ball_resources_used tbl det - total_ball_resources_lost tbl ints.
+
+Definition ball_par_from_states
+  (tbl : BallResourceTable)
+  (t1 t2 : DetailedInningsState)
+  (t1_ints t2_ints : list BallInterruption)
+  (g50 : nat) : runs :=
+  let R1 := effective_ball_resources tbl
+              (ball_resources_at_start tbl (det_balls_allocated t1)) t1_ints in
+  ball_par_score (det_score t1) R1 (ball_resources_used_net tbl t2 t2_ints) g50.
+
+Theorem ball_par_from_states_no_t2_interruptions :
+  forall tbl t1 t2 t1_ints g50,
+    ball_par_from_states tbl t1 t2 t1_ints [] g50 =
+    ball_par_score (det_score t1)
+      (effective_ball_resources tbl
+         (ball_resources_at_start tbl (det_balls_allocated t1)) t1_ints)
+      (ball_resources_used tbl t2) g50.
+Proof.
+  intros tbl t1 t2 t1_ints g50.
+  unfold ball_par_from_states, ball_resources_used_net. simpl.
+  rewrite Nat.sub_0_r. reflexivity.
+Qed.
 
 Theorem ball_target_positive :
   forall t1_score R1 R2 g50,
@@ -663,6 +688,7 @@ Definition result_to_nat (r : MatchResult) : nat :=
 Definition result_eq_dec : forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2} :=
   MatchResult_eq_dec.
 
+(* Clause 2: the target is the minimum winning score, so a completed chase that reaches it wins and one run short ties. *)
 Definition determine_result
   (target t2_score : runs)
   (t2_completed : bool)
@@ -671,12 +697,11 @@ Definition determine_result
     NoResult
   else if negb t2_completed then
     if t2_score <? target then NoResult
-    else if target <=? t2_score then Team2Wins
-    else NoResult
+    else Team2Wins
   else
-    if t2_score <? target then Team1Wins
-    else if target <? t2_score then Team2Wins
-    else Tie.
+    if target <=? t2_score then Team2Wins
+    else if t2_score + 1 =? target then Tie
+    else Team1Wins.
 
 Definition par_result
   (par t2_score : runs)
@@ -718,12 +743,32 @@ Definition compute_target (tbl : ResourceTable) (m : MatchState) : runs :=
     (match_t2_interruptions m)
     (match_g50 m).
 
+(* Clause 5.5: R2_used excludes resources removed by Team 2 suspensions, which were neither used nor remain available. *)
 Definition compute_par (tbl : ResourceTable) (m : MatchState) : runs :=
   let R1 := effective_resources tbl
               (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
               (match_t1_interruptions m) in
-  let R2_used := resources_used tbl (match_t2 m) in
+  let R2_used := resources_used tbl (match_t2 m)
+                 - total_resources_lost tbl (match_t2_interruptions m) in
   par_score (inn_score (match_t1 m)) R1 R2_used (match_g50 m).
+
+(* On an interruption-free chase the netting is inert. *)
+Theorem compute_par_no_t2_interruptions :
+  forall tbl m,
+    match_t2_interruptions m = [] ->
+    compute_par tbl m =
+    par_score (inn_score (match_t1 m))
+      (effective_resources tbl
+         (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
+         (match_t1_interruptions m))
+      (resources_used tbl (match_t2 m))
+      (match_g50 m).
+Proof.
+  intros tbl m H.
+  unfold compute_par.
+  rewrite H. simpl.
+  rewrite Nat.sub_0_r. reflexivity.
+Qed.
 
 Definition min_overs_met (m : MatchState) : bool :=
   min_overs_for_result (match_format m) <=? inn_overs_faced (match_t2 m).
@@ -745,17 +790,26 @@ Definition valid_overs (o : overs) (fmt : MatchFormat) : Prop :=
 Definition valid_innings (inn : InningsState) (fmt : MatchFormat) : Prop :=
   valid_wickets (inn_wickets inn) /\
   inn_overs_faced inn <= inn_overs_allocated inn /\
-  inn_overs_allocated inn <= total_overs fmt.
+  inn_overs_allocated inn <= total_overs fmt /\
+  inn_balls_faced inn <= inn_balls_allocated inn /\
+  inn_balls_allocated inn = inn_overs_allocated inn * 6.
+
+Lemma initial_innings_valid :
+  forall fmt allocated,
+    allocated <= total_overs fmt ->
+    valid_innings (initial_innings allocated) fmt.
+Proof.
+  intros fmt allocated H.
+  unfold valid_innings, valid_wickets, initial_innings; simpl.
+  repeat split; lia.
+Qed.
 
 Definition valid_interruption (int : Interruption) (inn : InningsState) : Prop :=
   int_at_overs int <= overs_remaining inn /\
   int_at_wickets int = inn_wickets inn /\
   int_overs_lost int <= int_at_overs int.
 
-(* An interruption history is recorded in match order. Each interruption
-   carries the overs remaining and wickets down at its own moment, so wicket
-   counts are nondecreasing and overs remaining nonincreasing along the
-   list; the innings state is threaded through the fold. *)
+(* Interruption histories are recorded in match order with the innings state threaded, so wickets are nondecreasing and overs remaining nonincreasing along the list. *)
 Fixpoint valid_interruption_seq
   (wkts_so_far : wickets) (overs_left : overs)
   (ints : list Interruption) : Prop :=
@@ -776,8 +830,7 @@ Definition valid_match (m : MatchState) : Prop :=
   valid_interruption_seq 0 (inn_overs_allocated (match_t2 m)) (match_t2_interruptions m) /\
   match_g50 m > 0.
 
-(* Sequential validity yields the pointwise bound each loss computation
-   needs. *)
+(* Sequential validity yields the pointwise bound each loss computation needs. *)
 Lemma valid_seq_losses_bounded :
   forall ints w r,
     valid_interruption_seq w r ints ->
@@ -791,9 +844,7 @@ Proof.
     + eapply IH. exact H5.
 Qed.
 
-(* Two interruptions at different wicket counts validate under the
-   sequential predicate; the pointwise pin admitted only one wicket count
-   across the whole history. *)
+(* Two interruptions at distinct wicket counts validate under the sequential predicate. *)
 Example valid_seq_two_interruptions :
   valid_interruption_seq 0 50
     [ {| int_at_overs := 40; int_at_wickets := 2;
@@ -806,17 +857,9 @@ Qed.
 
 (******************************************************************************)
 (*                      RESOURCE TABLE PROPERTIES                            *)
-(*                                                                            *)
-(*  Note: The fundamental monotonicity and boundary properties are encoded    *)
-(*  directly in the ResourceTable record fields:                              *)
-(*    - table_overs_mono: more overs => more resources                        *)
-(*    - table_wickets_mono: more wickets => fewer resources                   *)
-(*    - table_allout: 10 wickets => 0 resources                               *)
-(*    - table_no_overs: 0 overs => 0 resources                                *)
-(*    - table_full_odi: 50 overs, 0 wickets => 100% resources (1000)          *)
-(*                                                                            *)
-(*  Use these record projections directly rather than wrapper lemmas.         *)
 (******************************************************************************)
+
+(* The monotonicity and boundary laws are ResourceTable record fields; use the projections directly rather than wrapper lemmas. *)
 
 (******************************************************************************)
 (*                           TARGET THEOREMS                                 *)
@@ -948,16 +991,14 @@ Proof.
   unfold determine_result.
   destruct min_met; simpl.
   - destruct completed; simpl.
-    + destruct (score <? target) eqn:E1.
-      * left. reflexivity.
-      * destruct (target <? score) eqn:E2.
-        -- right. left. reflexivity.
+    + destruct (target <=? score) eqn:E1.
+      * right. left. reflexivity.
+      * destruct (score + 1 =? target) eqn:E2.
         -- right. right. left. reflexivity.
+        -- left. reflexivity.
     + destruct (score <? target) eqn:E1.
       * right. right. right. reflexivity.
-      * destruct (target <=? score) eqn:E2.
-        -- right. left. reflexivity.
-        -- right. right. right. reflexivity.
+      * right. left. reflexivity.
   - right. right. right. reflexivity.
 Qed.
 
@@ -968,10 +1009,10 @@ Proof.
   intros []; auto.
 Qed.
 
-Theorem team2_wins_iff_exceeds_target :
+Theorem team2_wins_iff_reaches_target :
   forall target score min_met,
     min_met = true ->
-    determine_result target score true min_met = Team2Wins <-> target < score.
+    determine_result target score true min_met = Team2Wins <-> target <= score.
 Proof.
   intros target score min_met Hmet.
   subst min_met.
@@ -979,43 +1020,19 @@ Proof.
   simpl.
   split.
   - intro H.
-    destruct (score <? target) eqn:E1.
-    + discriminate.
-    + destruct (target <? score) eqn:E2.
-      * apply Nat.ltb_lt in E2. exact E2.
-      * discriminate.
+    destruct (target <=? score) eqn:E1.
+    + apply Nat.leb_le. exact E1.
+    + destruct (score + 1 =? target); discriminate.
   - intro H.
-    destruct (score <? target) eqn:E1.
-    + apply Nat.ltb_lt in E1. lia.
-    + destruct (target <? score) eqn:E2.
-      * reflexivity.
-      * apply Nat.ltb_ge in E2. lia.
-Qed.
-
-Theorem team1_wins_iff_below_target :
-  forall target score min_met,
-    min_met = true ->
-    determine_result target score true min_met = Team1Wins <-> score < target.
-Proof.
-  intros target score min_met Hmet.
-  subst min_met.
-  unfold determine_result.
-  simpl.
-  split.
-  - intro H.
-    destruct (score <? target) eqn:E1.
-    + apply Nat.ltb_lt in E1. exact E1.
-    + destruct (target <? score) eqn:E2; discriminate.
-  - intro H.
-    apply Nat.ltb_lt in H.
+    apply Nat.leb_le in H.
     rewrite H.
     reflexivity.
 Qed.
 
-Theorem tie_iff_equals_target :
+Theorem team1_wins_iff_below_tie_score :
   forall target score min_met,
     min_met = true ->
-    determine_result target score true min_met = Tie <-> score = target.
+    determine_result target score true min_met = Team1Wins <-> score + 1 < target.
 Proof.
   intros target score min_met Hmet.
   subst min_met.
@@ -1023,21 +1040,49 @@ Proof.
   simpl.
   split.
   - intro H.
-    destruct (score <? target) eqn:E1.
+    destruct (target <=? score) eqn:E1.
     + discriminate.
-    + destruct (target <? score) eqn:E2.
+    + destruct (score + 1 =? target) eqn:E2.
       * discriminate.
-      * apply Nat.ltb_ge in E1.
-        apply Nat.ltb_ge in E2.
-        lia.
+      * apply Nat.leb_gt in E1. apply Nat.eqb_neq in E2. lia.
   - intro H.
-    subst score.
-    destruct (target <? target) eqn:E1.
-    + apply Nat.ltb_lt in E1. lia.
-    + destruct (target <? target) eqn:E2.
-      * apply Nat.ltb_lt in E2. lia.
-      * reflexivity.
+    assert (E1: (target <=? score) = false) by (apply Nat.leb_gt; lia).
+    assert (E2: (score + 1 =? target) = false) by (apply Nat.eqb_neq; lia).
+    rewrite E1, E2.
+    reflexivity.
 Qed.
+
+Theorem tie_iff_one_short_of_target :
+  forall target score min_met,
+    min_met = true ->
+    determine_result target score true min_met = Tie <-> score + 1 = target.
+Proof.
+  intros target score min_met Hmet.
+  subst min_met.
+  unfold determine_result.
+  simpl.
+  split.
+  - intro H.
+    destruct (target <=? score) eqn:E1.
+    + discriminate.
+    + destruct (score + 1 =? target) eqn:E2.
+      * apply Nat.eqb_eq. exact E2.
+      * discriminate.
+  - intro H.
+    assert (E1: (target <=? score) = false) by (apply Nat.leb_gt; lia).
+    assert (E2: (score + 1 =? target) = true) by (apply Nat.eqb_eq; lia).
+    rewrite E1, E2.
+    reflexivity.
+Qed.
+
+(* Completed-chase boundary regressions: reaching the target wins, one short ties. *)
+Example completed_chase_at_target_wins :
+  determine_result 235 235 true true = Team2Wins.
+Proof. reflexivity. Qed.
+
+Example completed_chase_one_short_ties :
+  determine_result 235 234 true true = Tie.
+Proof. reflexivity. Qed.
 
 (******************************************************************************)
 (*                         INTERRUPTION THEOREMS                             *)
@@ -1226,7 +1271,7 @@ Example target_fewer_resources :
 Proof. reflexivity. Qed.
 
 Example target_more_resources :
-  revised_target_method2 250 800 1000 245 = 741.
+  revised_target_method2 250 800 1000 245 = 300.
 Proof. reflexivity. Qed.
 
 (******************************************************************************)
@@ -1236,60 +1281,55 @@ Proof. reflexivity. Qed.
 Lemma result_team1_inv :
   forall target score completed min_met,
     determine_result target score completed min_met = Team1Wins ->
-    min_met = true /\ completed = true /\ score < target.
+    min_met = true /\ completed = true /\ score + 1 < target.
 Proof.
   intros target score completed min_met H.
   unfold determine_result in H.
   destruct min_met; simpl in H.
   - destruct completed; simpl in H.
-    + destruct (score <? target) eqn:E.
-      * apply Nat.ltb_lt in E.
-        repeat split; auto.
-      * destruct (target <? score); discriminate.
-    + destruct (score <? target) eqn:E1.
+    + destruct (target <=? score) eqn:E1.
       * discriminate.
-      * destruct (target <=? score); discriminate.
+      * destruct (score + 1 =? target) eqn:E2.
+        -- discriminate.
+        -- apply Nat.leb_gt in E1. apply Nat.eqb_neq in E2.
+           repeat split; auto. lia.
+    + destruct (score <? target); discriminate.
   - discriminate.
 Qed.
 
 Lemma result_team2_inv :
   forall target score completed min_met,
     determine_result target score completed min_met = Team2Wins ->
-    min_met = true /\
-    ((completed = true /\ target < score) \/
-     (completed = false /\ target <= score)).
+    min_met = true /\ target <= score.
 Proof.
   intros target score completed min_met H.
   unfold determine_result in H.
   destruct min_met; simpl in H; try discriminate.
+  split; [reflexivity|].
   destruct completed; simpl in H.
-  - destruct (score <? target) eqn:E1; try discriminate.
-    destruct (target <? score) eqn:E2; try discriminate.
-    apply Nat.ltb_lt in E2. split. reflexivity. left. split; auto.
-  - destruct (score <? target) eqn:E1; try discriminate.
-    destruct (target <=? score) eqn:E2; try discriminate.
-    apply Nat.leb_le in E2. split. reflexivity. right. split; auto.
+  - destruct (target <=? score) eqn:E1.
+    + apply Nat.leb_le. exact E1.
+    + destruct (score + 1 =? target); discriminate.
+  - destruct (score <? target) eqn:E1.
+    + discriminate.
+    + apply Nat.ltb_ge in E1. lia.
 Qed.
 
 Lemma result_tie_inv :
   forall target score completed min_met,
     determine_result target score completed min_met = Tie ->
-    min_met = true /\ completed = true /\ score = target.
+    min_met = true /\ completed = true /\ score + 1 = target.
 Proof.
   intros target score completed min_met H.
   unfold determine_result in H.
   destruct min_met; simpl in H.
   - destruct completed; simpl in H.
-    + destruct (score <? target) eqn:E1.
+    + destruct (target <=? score) eqn:E1.
       * discriminate.
-      * destruct (target <? score) eqn:E2.
+      * destruct (score + 1 =? target) eqn:E2.
+        -- apply Nat.eqb_eq in E2. repeat split; auto.
         -- discriminate.
-        -- apply Nat.ltb_ge in E1.
-           apply Nat.ltb_ge in E2.
-           repeat split; auto. lia.
-    + destruct (score <? target) eqn:E1.
-      * discriminate.
-      * destruct (target <=? score); discriminate.
+    + destruct (score <? target); discriminate.
   - discriminate.
 Qed.
 
@@ -1302,15 +1342,12 @@ Proof.
   unfold determine_result in H.
   destruct min_met; simpl in H.
   - destruct completed; simpl in H.
-    + destruct (score <? target) eqn:E1.
+    + destruct (target <=? score) eqn:E1.
       * discriminate.
-      * destruct (target <? score); discriminate.
+      * destruct (score + 1 =? target); discriminate.
     + destruct (score <? target) eqn:E1.
       * right. split; auto. apply Nat.ltb_lt. exact E1.
-      * destruct (target <=? score) eqn:E2.
-        -- discriminate.
-        -- apply Nat.leb_gt in E2.
-           right. split; auto.
+      * discriminate.
   - left. reflexivity.
 Qed.
 
@@ -1344,34 +1381,11 @@ Qed.
 
 (******************************************************************************)
 (*                   ICC PROFESSIONAL EDITION MODEL                          *)
-(*                                                                            *)
-(*  Reference: ICC Playing Handbook, Appendix: DLS Method.                    *)
-(*  The DLS Professional Edition uses an exponential decay model:             *)
-(*                                                                            *)
-(*    P(u,w) = Z0(w) * (1 - exp(-b(w) * u))                                   *)
-(*                                                                            *)
-(*  where:                                                                    *)
-(*    P(u,w) = resources remaining with u overs left and w wickets down.      *)
-(*    Z0(w)  = asymptotic resource percentage as overs approach infinity.     *)
-(*    b(w)   = decay rate controlling how quickly resources accumulate.       *)
-(*                                                                            *)
-(*  The values below are derived from official ICC tables and represent a     *)
-(*  rational approximation suitable for verified computation in nat.          *)
-(*  Actual ICC tables use floating-point; these are scaled by 1000.           *)
-(*                                                                            *)
-(*  Source: Duckworth, F.C. and Lewis, A.J. (1998). A fair method for         *)
-(*  resetting the target in interrupted one-day cricket matches.              *)
-(*  Journal of the Operational Research Society, 49(3), 220-227.              *)
-(*                                                                            *)
-(*  Updated: Stern, S.E. (2016). The Duckworth-Lewis-Stern method.            *)
-(*  Published in ICC Cricket Playing Handbook.                                *)
-(*                                                                            *)
 (******************************************************************************)
 
-(** Z0(w): Asymptotic resource percentage for w wickets lost.
-    Represents the maximum percentage of resources theoretically available
-    with infinite overs remaining after losing w wickets.
-    Values scaled by 10 (100.0% = 1000). *)
+(* Exponential-decay model P(u,w) = Z0(w) * (1 - exp(-b(w) * u)) after Duckworth-Lewis (JORS 49(3), 1998) and Stern (JORS 67(12), 2016), rationally approximated in nat at scale 1000. *)
+
+(* Z0(w): asymptotic resource percentage with w wickets lost, scaled by 10. *)
 Definition Z0_asymptotic (w : wickets) : nat :=
   match w with
   | 0 => 1000
@@ -1387,9 +1401,7 @@ Definition Z0_asymptotic (w : wickets) : nat :=
   | _ => 0
   end.
 
-(** b(w): Decay rate parameter for w wickets lost.
-    Higher values mean resources accumulate faster initially.
-    Values scaled by 1000 for integer arithmetic. *)
+(* b(w): decay rate with w wickets lost, scaled by 1000. *)
 Definition decay_rate_scaled (w : wickets) : nat :=
   match w with
   | 0 => 47
@@ -1414,13 +1426,9 @@ Definition exp_decay_approx (u : overs) (w : wickets) : resource :=
     let decay := 1000 - (1000 * 1000 / (1000 + b * u)) in
     z0 * decay / 1000.
 
+(* icc_resource_percentage is definitionally exp_decay_approx, so both boundary lemma sets certify one kernel. *)
 Definition icc_resource_percentage (u : overs) (w : wickets) : nat :=
-  if (w =? 10) then 0
-  else if (u =? 0) then 0
-  else
-    let z0 := Z0_asymptotic w in
-    let b := decay_rate_scaled w in
-    z0 - (z0 * 1000 / (1000 + b * u)).
+  exp_decay_approx u w.
 
 Lemma Z0_allout : Z0_asymptotic 10 = 0.
 Proof.
@@ -1458,30 +1466,20 @@ Qed.
 Lemma icc_allout : forall u, icc_resource_percentage u 10 = 0.
 Proof.
   intros u.
-  unfold icc_resource_percentage.
-  simpl.
-  reflexivity.
+  apply exp_decay_allout.
 Qed.
 
 Lemma icc_no_overs : forall w, icc_resource_percentage 0 w = 0.
 Proof.
   intros w.
-  unfold icc_resource_percentage.
-  destruct (w =? 10) eqn:Ew.
-  - reflexivity.
-  - simpl. reflexivity.
+  apply exp_decay_no_overs.
 Qed.
 
 (******************************************************************************)
 (*                 RATIONAL-DECAY MODEL AS A VERIFIED TABLE                   *)
 (******************************************************************************)
 
-(* The raw rational-decay curves cross at very low overs: the early-innings
-   slope Z0(w) * b(w) grows with w through w = 3 before the asymptote
-   shrinks, so exp_decay_approx is not wicket-antitone there. A running
-   minimum over wickets restores the wicket law exactly, the domain is
-   capped at 50 overs, and normalization by the model value at
-   (50 overs, 0 wickets) pins 100% at a full innings. *)
+(* The raw curves cross at very low overs (the early slope Z0(w) * b(w) grows with w through w = 3), so a running minimum restores wicket antitonicity, the domain caps at 50 overs, and normalization pins 100% at a full innings. *)
 
 Lemma exp_decay_approx_mono_u :
   forall u1 u2 w, u1 <= u2 ->
@@ -1565,8 +1563,7 @@ Qed.
 Lemma exp_decay_full_value : exp_decay_approx 50 0 = 702.
 Proof. reflexivity. Qed.
 
-(* The rational-decay lookup: capped domain, antitone envelope, normalized
-   so a full 50-over innings is exactly 100%. *)
+(* Rational-decay lookup: capped domain, antitone envelope, normalized to 100% at a full innings. *)
 Definition dls_lookup (o : overs) (w : wickets) : resource :=
   rational_capped (Nat.min o 50) w * 1000 / 702.
 
@@ -1622,9 +1619,7 @@ Example rational_capped_agrees_mid :
   rational_capped 25 5 = exp_decay_approx 25 5.
 Proof. reflexivity. Qed.
 
-(* At very low overs the raw model loses wicket-antitonicity and the
-   envelope bites: with one over left, two wickets down rates above zero
-   wickets down in the raw model. *)
+(* At one over left the raw model rates two wickets down above zero and the envelope bites. *)
 Example rational_envelope_bites_low_overs :
   exp_decay_approx 1 2 = 47 /\ exp_decay_approx 1 0 = 45 /\
   rational_capped 1 2 = 45.
@@ -1891,9 +1886,7 @@ Proof. reflexivity. Qed.
 (*                 SCHEME EQUALITY / UNIFORM DECIDABILITY                    *)
 (******************************************************************************)
 
-(** Scheme Equality (declared at each inductive's definition site) is the
-    single uniform decidability mechanism; the earlier ladder names are
-    definitional aliases of the generated instances. *)
+(* Scheme Equality at each inductive's definition site is the uniform decidability mechanism; the ladder names alias the generated instances. *)
 
 Lemma InningsPhase_beq_refl : forall p, InningsPhase_beq p p = true.
 Proof. intros []; reflexivity. Qed.
@@ -2044,25 +2037,27 @@ Proof.
   intros target score completed min_met.
   unfold determine_result.
   destruct min_met, completed; simpl;
+  repeat (destruct (_ <=? _); simpl);
+  repeat (destruct (_ =? _); simpl);
   repeat (destruct (_ <? _); simpl);
-  try destruct (_ <=? _); discriminate.
+  discriminate.
 Qed.
 
 Theorem result_trichotomy_completed :
   forall target score,
     let r := determine_result target score true true in
-    (r = Team1Wins /\ score < target) \/
-    (r = Team2Wins /\ target < score) \/
-    (r = Tie /\ score = target).
+    (r = Team1Wins /\ score + 1 < target) \/
+    (r = Team2Wins /\ target <= score) \/
+    (r = Tie /\ score + 1 = target).
 Proof.
   intros target score.
   unfold determine_result. simpl.
-  destruct (score <? target) eqn:E1.
-  - left. split; auto. apply Nat.ltb_lt; auto.
-  - destruct (target <? score) eqn:E2.
-    + right. left. split; auto. apply Nat.ltb_lt; auto.
-    + right. right. split; auto.
-      apply Nat.ltb_ge in E1, E2. lia.
+  destruct (target <=? score) eqn:E1.
+  - right. left. split; [reflexivity | apply Nat.leb_le; exact E1].
+  - destruct (score + 1 =? target) eqn:E2.
+    + right. right. split; [reflexivity | apply Nat.eqb_eq; exact E2].
+    + left. split; [reflexivity |].
+      apply Nat.leb_gt in E1. apply Nat.eqb_neq in E2. lia.
 Qed.
 
 (* The exclusive disjunction form: exactly one of the cases holds *)
@@ -2167,7 +2162,7 @@ Qed.
 Theorem revised_target_method2_form :
   forall t1_score R1 R2 g50,
     R2 >= R1 ->
-    revised_target t1_score R1 R2 g50 = t1_score + g50 * (R2 - R1) / 100 + 1.
+    revised_target t1_score R1 R2 g50 = t1_score + g50 * (R2 - R1) / 1000 + 1.
 Proof.
   intros. unfold revised_target.
   apply Nat.ltb_ge in H. rewrite H. reflexivity.
@@ -2194,7 +2189,7 @@ Qed.
 Theorem revised_target_method2_bounded_by_g50_R2 :
   forall t1_score R1 R2 g50,
     R1 > 0 -> R2 >= R1 ->
-    revised_target t1_score R1 R2 g50 <= t1_score + g50 * R2 / 100 + 1.
+    revised_target t1_score R1 R2 g50 <= t1_score + g50 * R2 / 1000 + 1.
 Proof.
   intros t1_score R1 R2 g50 HR1 Hge.
   rewrite revised_target_method2_form by lia.
@@ -2208,7 +2203,7 @@ Qed.
 Theorem revised_target_universal_upper_bound :
   forall t1_score R1 R2 g50 R_max,
     R1 > 0 -> R2 <= R_max ->
-    revised_target t1_score R1 R2 g50 <= t1_score + g50 * R_max / 100 + 1.
+    revised_target t1_score R1 R2 g50 <= t1_score + g50 * R_max / 1000 + 1.
 Proof.
   intros t1_score R1 R2 g50 R_max HR1 Hle.
   destruct (Compare_dec.le_lt_dec R1 R2) as [Hge|Hlt].
@@ -2221,7 +2216,7 @@ Proof.
     apply Nat.add_le_mono_r.
     assert (t1_score * R2 / R1 <= t1_score).
     { apply Nat.Div0.div_le_upper_bound. nia. }
-    assert (t1_score <= t1_score + g50 * R_max / 100) by lia.
+    assert (t1_score <= t1_score + g50 * R_max / 1000) by lia.
     lia.
 Qed.
 
@@ -2331,8 +2326,7 @@ Qed.
 (*                   TEAM 1 INTERRUPTIONS / G50 ROLE                         *)
 (******************************************************************************)
 
-(* When Team 1 is interrupted, R1 decreases. If T2's R2 still exceeds R1',
-   method2 is used with G50 inflating the target. *)
+(* Team 1 interruptions lower R1; when R2 exceeds the lowered R1, method 2 inflates the target by the G50 share. *)
 
 Theorem t1_interruption_lowers_R1 :
   forall tbl base ints,
@@ -2344,7 +2338,7 @@ Theorem t1_interruption_target_method2 :
     let R1' := effective_resources tbl base_R1 ints in
     R2 >= R1' ->
     revised_target t1_score R1' R2 g50 =
-    t1_score + g50 * (R2 - R1') / 100 + 1.
+    t1_score + g50 * (R2 - R1') / 1000 + 1.
 Proof.
   intros tbl base_R1 t1_score R2 ints g50 R1' Hge.
   apply revised_target_method2_form. lia.
@@ -2364,16 +2358,16 @@ Qed.
 Theorem g50_strict_inflation :
   forall t1_score R1 R2 g50,
     R1 > 0 -> R2 > R1 ->
-    g50 * (R2 - R1) >= 100 ->
+    g50 * (R2 - R1) >= 1000 ->
     revised_target t1_score R1 R2 g50 >
     revised_target t1_score R1 R1 g50.
 Proof.
-  intros t1_score R1 R2 g50 HR1 Hgt H100.
+  intros t1_score R1 R2 g50 HR1 Hgt H1000.
   rewrite equal_resources_fair_target by lia.
   rewrite revised_target_method2_form by lia.
-  assert (g50 * (R2 - R1) / 100 >= 1).
-  { assert (Hgeq: 100 <= g50 * (R2 - R1)) by lia.
-    apply Nat.Div0.div_le_mono with (c := 100) in Hgeq.
+  assert (g50 * (R2 - R1) / 1000 >= 1).
+  { assert (Hgeq: 1000 <= g50 * (R2 - R1)) by lia.
+    apply Nat.Div0.div_le_mono with (c := 1000) in Hgeq.
     rewrite Nat.div_same in Hgeq by lia. exact Hgeq. }
   lia.
 Qed.
@@ -2405,7 +2399,7 @@ Theorem t1_int_with_t2_full_uses_g50 :
     let R2 := resources_at_start tbl t2_alloc in
     R2 >= R1 -> R1 > 0 ->
     revised_target t1_score R1 R2 g50 =
-    t1_score + g50 * (R2 - R1) / 100 + 1.
+    t1_score + g50 * (R2 - R1) / 1000 + 1.
 Proof.
   intros tbl t1_score t1_alloc t2_alloc t1_ints g50 R1 R2 Hgt HR1.
   apply revised_target_method2_form. lia.
@@ -2470,24 +2464,18 @@ Proof.
   assert (Hmet: min_overs_met m = true).
   { unfold min_overs_met. apply Nat.leb_le. exact Hthresh. }
   rewrite Hmet. rewrite Hcomp. simpl.
-  destruct (inn_score (match_t2 m) <? compute_target tbl m) eqn:E1.
-  - left. reflexivity.
-  - destruct (compute_target tbl m <? inn_score (match_t2 m)) eqn:E2.
-    + right. left. reflexivity.
+  destruct (compute_target tbl m <=? inn_score (match_t2 m)) eqn:E1.
+  - right. left. reflexivity.
+  - destruct (inn_score (match_t2 m) + 1 =? compute_target tbl m) eqn:E2.
     + right. right. reflexivity.
+    + left. reflexivity.
 Qed.
 
 (******************************************************************************)
 (*                       COMBINED RESULT DECISION                             *)
 (******************************************************************************)
 
-(* ECB/ICC Standard Edition regulations, clause 5.5: if the match has to be
-   terminated during Team 2's innings after the minimum overs, the result
-   is decided by comparing Team 2's score with the par score; clause 7
-   describes completed chases by target. decide_match dispatches
-   accordingly: an innings ended by stoppage (Interrupted or
-   InningsAbandoned phase) is judged against par, anything else by target
-   as before. *)
+(* Clause 5.5: a chase ended by stoppage after the minimum overs is judged against par; completed chases are judged by target (clause 7). *)
 
 Definition ended_by_stoppage (p : InningsPhase) : bool :=
   match p with
@@ -2537,8 +2525,7 @@ Proof.
   rewrite Hmin, Hstop. reflexivity.
 Qed.
 
-(* On a terminated chase the decision is the par trichotomy of clause
-   5.5: above par Team 2 win, below par Team 1 win, level par a tie. *)
+(* Clause 5.5 par trichotomy on a terminated chase: above par Team 2 win, level a tie, below Team 1 win. *)
 Theorem decide_match_stopped_trichotomy :
   forall tbl m,
     min_overs_met m = true ->
@@ -2561,9 +2548,12 @@ Proof.
       apply Nat.ltb_ge in E1. apply Nat.ltb_ge in E2. lia.
 Qed.
 
-(* The regulations' own worked example, clause 7.1.2: chasing 201, Team 2
-   are 115/4 after 30 overs with par 110 when the match is abandoned;
-   Team 2 win by 5 runs. *)
+(* Clause 7.1.1: set 186, Team 2 make 180 and fall 5 short of the 185 tie score; Team 1 win by 5. *)
+Example ecb_example_7_1_1 :
+  determine_result 186 180 true true = Team1Wins /\ 186 - 1 - 180 = 5.
+Proof. split; reflexivity. Qed.
+
+(* Clause 7.1.2: chasing 201, Team 2 are 115/4 with par 110 when the match is abandoned; Team 2 win by 5. *)
 Example ecb_example_7_1_2 : par_result 110 115 true = Team2Wins.
 Proof. reflexivity. Qed.
 
@@ -2722,12 +2712,7 @@ Qed.
 (*                   POWERPLAY-AWARE TABLE CONSTRUCTOR                        *)
 (******************************************************************************)
 
-(* The published DLS tables are fitted to innings that include mandatory
-   powerplays, so target computation from a published table applies no
-   multiplier: fielding-restriction effects are already in the data. The
-   constructor below scopes the explicit what-if boost model instead: it
-   bakes the powerplay adjustment into the table, capped at 100%, and the
-   result is again a lawful ResourceTable. *)
+(* Published tables already price mandatory powerplays, so target computation applies no multiplier; this constructor scopes the explicit what-if boost, capped at 100%, and returns a lawful table. *)
 
 Definition powerplay_boost_lookup (tbl : ResourceTable) (o : overs) (w : wickets) : resource :=
   Nat.min 1000 (powerplay_resource_adjustment (lookup tbl o w) true).
@@ -2863,10 +2848,7 @@ Theorem hundred_powerplay_proportion :
   pp * 4 = tot.
 Proof. simpl. lia. Qed.
 
-(* The Hundred delivers 100 balls per innings in twenty five-ball sets
-   (a bowler may bowl two consecutive sets). total_overs 16 is the six-ball
-   floor (100 / 6) used by the overs-based machinery; the ball-native model
-   below is the faithful representation. Test format consistency: *)
+(* The Hundred is 100 balls in twenty five-ball sets; total_overs 16 is the six-ball floor used by the overs machinery, the ball-native model below the faithful one. *)
 Theorem hundred_format_consistency :
   total_balls_in_format TheHundred = 100 /\
   total_overs TheHundred = 16 /\
@@ -2881,9 +2863,7 @@ Theorem hundred_balls_from_sets :
   hundred_sets * balls_per_set = total_balls_in_format TheHundred.
 Proof. reflexivity. Qed.
 
-(* Ball-native innings for The Hundred: the format is represented by its
-   100 balls and 25-ball powerplay through DetailedInningsState, not by
-   six-ball-over approximation. *)
+(* Ball-native innings for The Hundred: 100 balls and a 25-ball powerplay through DetailedInningsState. *)
 Definition hundred_innings : DetailedInningsState :=
   initial_innings_balls TheHundred (total_balls_in_format TheHundred).
 
@@ -2903,8 +2883,7 @@ Proof. reflexivity. Qed.
 (*               INTERPOLATED BALL TABLE FROM OVERS TABLE                      *)
 (******************************************************************************)
 
-(* Over-floor projection: simplest correct construction of a BallResourceTable
-   from a ResourceTable. *)
+(* Over-floor projection: the simplest lawful BallResourceTable from a ResourceTable. *)
 
 Definition over_lookup_to_ball (tbl : ResourceTable) (b : balls) (w : wickets) : scaled_resource :=
   let o := Nat.min (b / 6) 50 in
@@ -2969,10 +2948,7 @@ Definition BallTableFromOvers (tbl : ResourceTable) : BallResourceTable := {|
   ball_table_full_odi := over_lookup_to_ball_full_odi tbl
 |}.
 
-(* Linear interpolation: ball-level granularity using the existing
-   `interpolate_resource` formula. We prove monotonicity in balls, boundary
-   conditions, and (under a natural derivative-monotonicity assumption) in
-   wickets as well. *)
+(* Linear interpolation to ball granularity: monotone in balls and at the boundaries unconditionally, antitone in wickets under the concavity assumption below. *)
 
 Lemma interpolate_resource_at_overs_boundary :
   forall tbl o w,
@@ -2990,7 +2966,6 @@ Lemma interpolate_resource_allout :
 Proof.
   intros tbl b. unfold interpolate_resource.
   rewrite (table_allout tbl). rewrite (table_allout tbl).
-  (* goal: 0 * 1000 + b mod 6 * ((0 - 0) * 1000) / 6 = 0 *)
   change (0 * 1000) with 0.
   change (0 - 0) with 0.
   change (0 * 1000) with 0.
@@ -3075,9 +3050,7 @@ Proof.
   - eapply Nat.le_trans; [exact IH | apply interpolate_resource_step].
 Qed.
 
-(* For wicket monotonicity of interpolation, we need an additional assumption
-   about the table — that the over-derivative is non-increasing in wickets.
-   This is the natural "DL concavity" condition. *)
+(* Wicket antitonicity of interpolation needs the over-derivative nonincreasing in wickets: the DL concavity condition. *)
 
 Definition table_concave_in_wickets (tbl : ResourceTable) : Prop :=
   forall o w1 w2,
@@ -3110,26 +3083,18 @@ Proof.
   lia.
 Qed.
 
-(* When the table is concave-in-wickets, interpolate_resource constructs a
-   full BallResourceTable. *)
-
-Definition interpolate_full_odi_concave
-  (tbl : ResourceTable) : interpolate_resource tbl 300 0 = 1000 * 1000.
-Proof.
-  replace 300 with (50 * 6) by reflexivity.
-  rewrite (interpolate_resource_at_overs_boundary tbl 50 0).
-  rewrite table_full_odi. reflexivity.
-Qed.
+(* A concave-in-wickets table interpolates to a lawful BallResourceTable. *)
 
 Lemma interpolate_resource_full :
   forall tbl, interpolate_resource tbl 300 0 = 1000 * 1000.
 Proof.
   intros tbl.
-  apply interpolate_full_odi_concave.
+  replace 300 with (50 * 6) by reflexivity.
+  rewrite (interpolate_resource_at_overs_boundary tbl 50 0).
+  rewrite table_full_odi. reflexivity.
 Qed.
 
-(* The interpolation result is at the 1,000,000 scale, but BallResourceTable
-   expects 10,000 scale. So we divide by 100 to construct the ball table. *)
+(* Interpolation lands at the 1,000,000 scale; division by 100 reaches the 10,000 scale of BallResourceTable. *)
 
 Definition interpolate_ball_lookup (tbl : ResourceTable) (b : balls) (w : wickets) : scaled_resource :=
   interpolate_resource tbl (Nat.min b 300) w / 100.
@@ -3183,7 +3148,6 @@ Proof.
   intros tbl. unfold interpolate_ball_lookup.
   replace (Nat.min 300 300) with 300 by (symmetry; apply Nat.min_id).
   rewrite interpolate_resource_full.
-  (* Goal: 1000 * 1000 / 100 = 10000. Use vm_compute to evaluate. *)
   vm_compute. reflexivity.
 Qed.
 
@@ -3202,15 +3166,7 @@ Definition BallTableFromInterpolation
 (*               ICC STANDARD-EDITION CONCRETE TABLE                          *)
 (******************************************************************************)
 
-(* A concrete published-style table calibrated to:
-     - 100% (= 1000 scaled) at (50 overs, 0 wickets)
-     - 0%   at (0 overs, w) and at (u, 10 wickets)
-     - monotone increasing in overs
-     - monotone decreasing in wickets
-
-   Built as a separable model: lookup(u, w) = u_factor(u) * w_factor(w) / 1000.
-   The factor values approximate the published DL Standard Edition table at
-   over boundaries (rounded to nearest integer percentage * 10). *)
+(* Separable synthetic table lookup(u, w) = u_factor(u) * w_factor(w) / 1000, calibrated to the boundary and monotonicity laws with factors approximating the published sheet at over boundaries. *)
 
 Definition icc_w_factor (w : wickets) : nat :=
   match w with
@@ -3380,10 +3336,7 @@ Definition ICCStandardTable : ResourceTable := {|
   table_full_odi := icc_table_full_odi
 |}.
 
-(* For the separable ICC model, exact wicket-concavity in nat arithmetic
-   would require strict reasoning about floor-division rounding. We provide
-   the over-floor BallResourceTable from the ICC overs table; this is always
-   correct and concavity-free. *)
+(* The over-floor projection serves the separable model without a concavity certificate. *)
 
 Definition ICCBallTable : BallResourceTable :=
   BallTableFromOvers ICCStandardTable.
@@ -3400,18 +3353,14 @@ Proof. vm_compute. lia. Qed.
 
 (******************************************************************************)
 (*              PUBLISHED DL STANDARD EDITION TABLE (2002)                    *)
-(*                                                                            *)
-(*  The official ball-by-ball table of resource percentages remaining for     *)
-(*  the Duckworth/Lewis Standard Edition, exactly as published (ECB           *)
-(*  Duckworth/Lewis/Stern Regulations; ICC Playing Handbook, Standard         *)
-(*  Edition). Row index = balls remaining (0 .. 300); column index =          *)
-(*  wickets lost (0 .. 9). Values are percentages scaled by 10, so 100.0%     *)
-(*  = 1000 and the printed 0.1% resolution is exact in nat. The record        *)
-(*  laws (monotone in balls, antitone in wickets, boundary rows) are          *)
-(*  certified by vm_compute over the whole grid.                              *)
 (******************************************************************************)
 
-Definition dl2002_data : list (list nat) := [
+(* The official ball-by-ball Standard Edition table (ECB Duckworth/Lewis/Stern Regulations; ICC Playing Handbook): rows are balls remaining 0-300, columns wickets lost 0-9, percentages scaled by 10 so the printed 0.1% resolution is exact; the record laws are certified by vm_compute over the whole grid. *)
+
+(* The grid is transcribed in binary N so its 3010 literals stay logarithmic as kernel terms and in extraction; lookups convert to nat at the cell level. *)
+Local Open Scope N_scope.
+
+Definition dl2002_data : list (list N) := [
   [0; 0; 0; 0; 0; 0; 0; 0; 0; 0];
   [6; 6; 6; 6; 6; 6; 6; 6; 6; 6];
   [12; 12; 12; 12; 12; 12; 12; 12; 12; 11];
@@ -3715,8 +3664,10 @@ Definition dl2002_data : list (list nat) := [
   [1000; 934; 851; 749; 627; 490; 349; 220; 119; 47]
 ].
 
+Local Close Scope N_scope.
+
 Definition dl2002_cell (b : balls) (w : wickets) : resource :=
-  nth w (nth (Nat.min b 300) dl2002_data []) 0.
+  N.to_nat (nth w (nth (Nat.min b 300) dl2002_data []) 0%N).
 
 (* Boolean certificates over the whole grid, discharged by vm_compute. *)
 
@@ -3743,11 +3694,10 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma dl2002_wickets_mono_true : dl2002_wickets_mono_ok = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Transcription tripwire: the sum of all 3010 cells, computed in binary N
-   so the certified total stays small as a term. *)
+(* Transcription tripwire: the sum of all 3010 cells. *)
 Example dl2002_checksum :
   fold_right N.add 0%N
-    (map (fun r => N.of_nat (fold_right Nat.add 0 r)) dl2002_data) = 1108540%N.
+    (map (fun r => fold_right N.add 0%N r) dl2002_data) = 1108540%N.
 Proof. vm_compute. reflexivity. Qed.
 
 (* Reflection bridges from the boolean certificates to the record laws. *)
@@ -3779,10 +3729,11 @@ Lemma dl2002_cell_high_wickets :
 Proof.
   intros b w Hw.
   unfold dl2002_cell.
-  apply nth_overflow.
-  rewrite dl2002_row_length.
-  - exact Hw.
-  - lia.
+  rewrite nth_overflow.
+  - reflexivity.
+  - rewrite dl2002_row_length.
+    + exact Hw.
+    + lia.
 Qed.
 
 Lemma dl2002_cell_no_balls : forall w, dl2002_cell 0 w = 0.
@@ -3790,7 +3741,9 @@ Proof.
   intros w.
   unfold dl2002_cell.
   destruct w as [|[|[|[|[|[|[|[|[|[|w]]]]]]]]]]; try reflexivity.
-  apply nth_overflow. simpl. lia.
+  rewrite nth_overflow.
+  - reflexivity.
+  - simpl. lia.
 Qed.
 
 Lemma dl2002_cell_step_b :
@@ -3859,8 +3812,7 @@ Proof.
   - eapply Nat.le_trans; [apply dl2002_cell_step_w | exact IH].
 Qed.
 
-(* The published per-ball table as a lawful BallResourceTable, at the
-   10000 = 100.0% scale of the record interface. *)
+(* The published per-ball table as a lawful BallResourceTable at the 10000 = 100.0% scale. *)
 
 Definition dl_std_ball_lookup (b : balls) (w : wickets) : scaled_resource :=
   dl2002_cell b w * 10.
@@ -3905,8 +3857,7 @@ Definition DLStandardBallTable : BallResourceTable := {|
   ball_table_full_odi := dl_std_ball_full_odi
 |}.
 
-(* The published per-over table is the over-boundary restriction of the
-   per-ball data (the single-sheet over-by-over version of the table). *)
+(* The published per-over sheet is the over-boundary restriction of the per-ball data. *)
 
 Definition dl_std_over_lookup (u : overs) (w : wickets) : resource :=
   dl2002_cell (u * 6) w.
@@ -3951,8 +3902,7 @@ Definition DLStandardTable : ResourceTable := {|
   table_full_odi := dl_std_over_full_odi
 |}.
 
-(* The over-floor ball table derived from the published over table; the
-   direct per-ball DLStandardBallTable is the faithful one. *)
+(* Over-floor ball table from the published over sheet; DLStandardBallTable is the faithful one. *)
 Definition DLStandardOverFloorBallTable : BallResourceTable :=
   BallTableFromOvers DLStandardTable.
 
@@ -3979,12 +3929,17 @@ Proof. vm_compute. reflexivity. Qed.
 Example dl_std_ball_1_6 : ball_lookup DLStandardBallTable 1 6 = 60.
 Proof. vm_compute. reflexivity. Qed.
 
-(* The published over table narrowly fails wicket-concavity: between 38
-   and 39 overs the w=7 column steps 219 -> 220 while the w=6 column is
-   flat at 345, a 0.1% rounding artifact. Linear interpolation therefore
-   cannot serve the published table (BallTableFromInterpolation requires
-   the concavity certificate); the per-ball table above is transcribed
-   directly instead. *)
+(* Clause 5.6 with R2 > R1 on published values: Team 1 on 250 loses its last 20 overs at 2 wickets (R1 = 100.0% - 52.4% = 47.6%), Team 2 receives 30 overs (R2 = 75.1%), extra runs floor(245 * 27.5 / 100) = 67, target 318. *)
+Example method2_regulation_arithmetic :
+  revised_target 250
+    (effective_resources DLStandardTable
+       (resources_at_start DLStandardTable 50)
+       [ {| int_at_overs := 20; int_at_wickets := 2;
+            int_overs_lost := 20; int_during_innings := 1 |} ])
+    (resources_at_start DLStandardTable 30) 245 = 318.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The published over sheet fails wicket-concavity (w = 7 steps 219 -> 220 across overs 38 -> 39 while w = 6 is flat at 345), so interpolation cannot serve it and the per-ball table is transcribed directly. *)
 Example dl_standard_not_concave_in_wickets :
   ~ table_concave_in_wickets DLStandardTable.
 Proof.
@@ -3998,9 +3953,7 @@ Qed.
 (*               SECTION/VARIABLE REFACTOR DEMONSTRATION                       *)
 (******************************************************************************)
 
-(* Demonstrates the Section/Variable pattern: bind a single ResourceTable
-   to scope and write theorems against it without threading the table
-   parameter through each signature. *)
+(* Section/Variable pattern: theorems against a fixed table without threading the parameter through each signature. *)
 
 Section WithTable.
   Variable tbl : ResourceTable.
@@ -4073,10 +4026,7 @@ Example s_resources_avail_mono_generalized :
 (*               STERN PROFESSIONAL EDITION                                    *)
 (******************************************************************************)
 
-(* The Stern (professional-edition) correction kicks in for high-scoring
-   matches where the standard DL formula would overestimate the target.
-   When R1 < R2 and the score implied by R1 is high, the formula uses
-   an empirically-derived adjustment factor. *)
+(* Synthetic stand-in for the proprietary, unpublished Professional Edition high-score correction: qualitative only, excluded from the extraction surface, no fidelity claim beyond the theorems below. *)
 
 Definition stern_high_score_threshold : nat := 350.
 
@@ -4090,7 +4040,7 @@ Definition revised_target_stern
     revised_target_method1 t1_score R1 R2
   else
     let adj := stern_adjustment_factor t1_score in
-    t1_score + (g50 * (R2 - R1) * adj) / 10000 + 1.
+    t1_score + (g50 * (R2 - R1) * adj) / 100000 + 1.
 
 (* When score is below threshold, Stern reduces to standard DL *)
 Theorem stern_equals_standard_below_threshold :
@@ -4098,7 +4048,7 @@ Theorem stern_equals_standard_below_threshold :
     t1_score < stern_high_score_threshold ->
     revised_target_stern t1_score R1 R2 g50 =
     if R2 <? R1 then revised_target_method1 t1_score R1 R2
-    else t1_score + (g50 * (R2 - R1) * 100) / 10000 + 1.
+    else t1_score + (g50 * (R2 - R1) * 100) / 100000 + 1.
 Proof.
   intros t1_score R1 R2 g50 H.
   unfold revised_target_stern, stern_adjustment_factor.
@@ -4113,7 +4063,7 @@ Theorem stern_above_threshold_adjustment :
     R2 >= R1 ->
     revised_target_stern t1_score R1 R2 g50 =
     t1_score + (g50 * (R2 - R1) *
-                  (100 + (t1_score - stern_high_score_threshold) / 4)) / 10000 + 1.
+                  (100 + (t1_score - stern_high_score_threshold) / 4)) / 100000 + 1.
 Proof.
   intros t1_score R1 R2 g50 Hs HR.
   unfold revised_target_stern, stern_adjustment_factor.
@@ -4187,8 +4137,7 @@ Qed.
 (*               ANALYTIC REAL-VALUED DL FORMULA                              *)
 (******************************************************************************)
 
-(* The actual published DL formula is real-valued. We provide a separate
-   real-valued model and prove its monotonicity properties symbolically. *)
+(* The published DL formula is real-valued; a separate module proves its monotonicity symbolically. *)
 
 End DLS.
 
@@ -4200,10 +4149,7 @@ Open Scope R_scope.
 
 Module DLS_Real.
 
-(* The DL exponential-decay model:
-     R(u, w) = Z0(w) * (1 - exp(-b(w) * u))
-   where Z0(w) is the asymptotic resource percentage with w wickets lost
-   and b(w) is the decay rate. *)
+(* R(u, w) = Z0(w) * (1 - exp(-b(w) * u)) with asymptote Z0 and decay rate b. *)
 
 Definition Z0_real (w : nat) : R :=
   match w with
@@ -4342,11 +4288,18 @@ Module Type DLS_TABLE_SIG.
 End DLS_TABLE_SIG.
 
 Module DLS_Standard <: DLS_TABLE_SIG.
-  Definition the_table : DLS.ResourceTable := DLS.DummyTable.
+  Definition the_table : DLS.ResourceTable := DLS.DLStandardTable.
   Definition the_g50 : nat := 245.
   Lemma the_g50_positive : the_g50 > 0.
   Proof. unfold the_g50. lia. Qed.
 End DLS_Standard.
+
+Module DLS_Dummy <: DLS_TABLE_SIG.
+  Definition the_table : DLS.ResourceTable := DLS.DummyTable.
+  Definition the_g50 : nat := 245.
+  Lemma the_g50_positive : the_g50 > 0.
+  Proof. unfold the_g50. lia. Qed.
+End DLS_Dummy.
 
 Module DLS_Functor (P : DLS_TABLE_SIG).
   Import DLS.
@@ -4370,6 +4323,7 @@ Module DLS_Functor (P : DLS_TABLE_SIG).
 End DLS_Functor.
 
 Module DLS_Standard_Instance := DLS_Functor DLS_Standard.
+Module DLS_Dummy_Instance := DLS_Functor DLS_Dummy.
 
 Module DLS_Extras.
 Import DLS.
@@ -4378,14 +4332,7 @@ Import DLS.
 (*               WORKED EXAMPLE: 1992 SA vs ENG WORLD CUP SEMI-FINAL          *)
 (******************************************************************************)
 
-(* The match that motivated the method. Sydney, 22 March 1992: England
-   252/6 in 45 overs (the match was 45 overs per side from the start);
-   South Africa 231/6 with 13 balls remaining when rain stopped play.
-   Twelve balls were forfeited, leaving one. The Most Productive Overs
-   rule then in force revised the requirement to 21 runs off that ball
-   (the scoreboard notoriously showed 22). Under the published DL
-   Standard Edition table the computation below sets the target at 235:
-   four to win from the final ball. South Africa finished on 232. *)
+(* Sydney, 22 March 1992: England 252/6 in 45 overs; South Africa 231/6 when rain forfeited 12 of the last 13 balls and Most Productive Overs demanded 21 off the one remaining; the published table gives target 235, four to win, and South Africa finished 232. *)
 
 Definition england_1992 : DetailedInningsState := {|
   det_score := 252;
@@ -4407,15 +4354,13 @@ Definition sa_rain_1992 : BallInterruption := {|
   bint_in_powerplay := false
 |}.
 
-(* Both sides were allocated 45 overs = 270 balls: 95.0% of full
-   resources on the published table. *)
+(* Both sides were allocated 270 balls: 95.0% of full resources. *)
 Example r1_1992 :
   effective_ball_resources DLStandardBallTable
     (ball_resources_at_start DLStandardBallTable 270) [] = 9500.
 Proof. vm_compute. reflexivity. Qed.
 
-(* The stoppage read 7.1% remaining (13 balls, 6 down) and resumption
-   0.6% (1 ball, 6 down): 6.5% of resources lost. *)
+(* The stoppage read 7.1% remaining and the resumption 0.6%: 6.5% lost. *)
 Example resources_lost_1992 :
   ball_resource_lost_by_interruption DLStandardBallTable sa_rain_1992 = 650.
 Proof. vm_compute. reflexivity. Qed.
@@ -4463,25 +4408,26 @@ Extract Inductive list => "list" [ "[]" "(::)" ].
 Extract Inductive prod => "(*)" [ "(,)" ].
 Extract Inductive sumbool => "bool" [ "true" "false" ].
 
-Extract Constant Nat.add => "( + )".
-Extract Constant Nat.mul => "( * )".
-Extract Constant Nat.sub => "(fun a b -> max 0 (a - b))".
-Extract Constant Nat.div => "(fun a b -> if b = 0 then 0 else a / b)".
-Extract Constant Nat.modulo => "(fun a b -> if b = 0 then a else a mod b)".
-Extract Constant Nat.eqb => "(=)".
-Extract Constant Nat.ltb => "(<)".
-Extract Constant Nat.leb => "(<=)".
+(* The nat arithmetic notations elaborate to Init.Nat, so the maps anchor there; unqualified names hit dead PeanoNat aliases and extraction falls back to unary-cost recursion. *)
+Extract Constant Init.Nat.add => "( + )".
+Extract Constant Init.Nat.mul => "( * )".
+Extract Constant Init.Nat.sub => "(fun a b -> max 0 (a - b))".
+Extract Constant Init.Nat.div => "(fun a b -> if b = 0 then 0 else a / b)".
+Extract Constant Init.Nat.modulo => "(fun a b -> if b = 0 then a else a mod b)".
+Extract Constant Init.Nat.eqb => "(=)".
+Extract Constant Init.Nat.ltb => "(<)".
+Extract Constant Init.Nat.leb => "(<=)".
+Extract Constant Nat.min => "(fun a b -> if a < b then a else b)".
 
-(* Extract the verified calculator surface: target and par formulae at both
-   scales, the match-level pipeline, the combined decision function, and
-   the verified tables (published DL Standard Edition per-ball and
-   per-over, rational-decay, separable ICC-style, dummy). *)
+(* Extraction surface: both formula scales, the match pipeline, the decision functions, and the verified tables. *)
 Extraction "dls_extracted.ml"
   DLS.revised_target
   DLS.par_score
   DLS.ball_revised_target
   DLS.ball_par_score
   DLS.ball_target_from_states
+  DLS.ball_par_from_states
+  DLS.ball_resources_used_net
   DLS.ball_resource_lost_by_interruption
   DLS.effective_ball_resources
   DLS.ball_resources_at_start

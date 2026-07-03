@@ -26,3 +26,6 @@ jobs:
             startGroup "Extracted OCaml compiles"
               make extracted
             endGroup
+            startGroup "Tools build and property tests pass"
+              make test
+            endGroup

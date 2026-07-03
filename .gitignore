@@ -8,6 +8,9 @@
 *.cmo
 *.cmx
 *.o
+tools/dls
+tools/props
+tools/dls.js
 Makefile.rocq
 Makefile.rocq.conf
 .Makefile.rocq.d
