@@ -77,7 +77,14 @@ let () =
       else if sc + 1 = t then DLS.Tie
       else DLS.Team1Wins in
     check "completed-chase-boundary"
-      (Impl.determine_result t sc true true = expected)
+      (Impl.determine_result t sc true false true = expected)
+      (Printf.sprintf "target=%d score=%d" t sc);
+    (* clause 2 exemptions: dismissal and the target decide below the minimum *)
+    check "all-out-decides-below-minimum"
+      (Impl.determine_result t sc true true false = expected)
+      (Printf.sprintf "target=%d score=%d" t sc);
+    check "target-reached-wins-below-minimum"
+      (sc < t || Impl.determine_result t sc false false false = DLS.Team2Wins)
       (Printf.sprintf "target=%d score=%d" t sc)
   done;
 

@@ -25,8 +25,10 @@ regulations PDF (verified against the ICC methodology document:
 3010/3010 cells, zero mismatches). The per-over sheet (`DLStandardTable`) is
 the over-boundary restriction of the per-ball data
 (`DLStandardBallTable`); both are lawful instances of dependently-typed
-table records that carry their monotonicity and boundary laws as fields,
-so every downstream theorem holds for any lawful table.
+table records that carry their span and their monotonicity and boundary
+laws as fields, so every downstream theorem holds for any lawful table
+at any format span; normalized restrictions of the published data
+inhabit the records at the T20 and Hundred spans.
 
 **The regulation formulae.** `revised_target` implements clause 5.6 of
 the ECB regulations exactly (floor division is the regs' "ignoring any
@@ -36,29 +38,43 @@ it has more, one run added; a `vm_compute` example replays the clause's
 arithmetic on published table values. `par_score` and `par_result`
 implement clause 5.5 with its accounting (resources lost to Team 2
 suspensions are neither used nor available), `determine_result` decides
-completed chases at the clause 2 boundary (the target is the minimum
-winning score; one short ties, with the regulations' example 7.1.1
-transcribed), and `decide_match` dispatches between target and par
-exactly as the regulations prescribe for completed versus terminated
-chases, with agreement theorems for each regime and the par trichotomy
-proven. The ball-level pipeline (`ball_revised_target`,
-`ball_target_from_states`, `ball_par_from_states`) works at the table's
-10000-scale, with theorems that it agrees with the over-level formulae
-on corresponding inputs. The target is proven to be the par plus one at
-both scales (clause 5.5's "without the one run added"), and a soundness
-bundle over well-formed match states ties the calculator to the
-validity layer: the decision is total, sub-minimum matches yield no
-result, targets are positive, Team 2's used and available resources
-partition their allocation, a resource-exhausted chase meets its
-terminal par plus one, and equal resources give score plus one.
+chases at the clause 2 boundary with the playing-condition exemptions
+(the target is the minimum winning score; one short ties; reaching the
+target or being dismissed decides the match even below the minimum
+overs, with the regulations' example 7.1.1 transcribed), and
+`decide_match` dispatches between target and par exactly as the
+regulations prescribe for completed versus terminated chases, with
+agreement theorems for each regime, the par trichotomy proven, and a
+coherence theorem that the par regime cannot rob a chase that had
+already reached its target. The ball-level pipeline
+(`ball_revised_target`, `ball_target_from_states`,
+`ball_par_from_states`, and the dispatcher `ball_decide_match`) works at
+the table's 10000-scale, with theorems that it agrees with the
+over-level formulae on corresponding inputs. The target is proven to be
+the par plus one at both scales (clause 5.5's "without the one run
+added"), and a soundness bundle over well-formed match states ties the
+calculator to the validity layer: the decision is total, an undecided
+sub-minimum match yields no result while dismissal and the target decide
+regardless of the minimum, targets are positive, Team 2's used and
+available resources partition their allocation, suspension losses fit
+inside used resources so the clause 5.5 netting is exact rather than
+truncated, a resource-exhausted chase meets its terminal par plus one,
+and equal resources give score plus one.
 
 **Fairness properties.** Targets are positive; equal resources give
 target S+1; targets and par scores are monotone in Team 2's resources
 across both method regimes; interruptions only remove resources;
 interruption losses accumulate additively over any partition of the
 history. Interruption histories are validated by an event-sequenced
-predicate that threads the innings state through the list, so each
-interruption carries the wicket count of its own moment.
+predicate that threads the innings state through the list (at both
+granularities), so each interruption carries the wicket count of its own
+moment; under it, recorded losses are proven to fit inside the drop from
+the history's start to its final position, which is what makes the par
+netting exact. A single match history tagged by innings partitions into
+the two suspension lists with no loss dropped or double-counted, and
+both regulation G50 values (245, and 200 for associates, women's ODIs
+and U15) are carried as positivity-certified configurations, either of
+which yields a well-formed fresh match.
 
 **A discovered fact about the published table.** The over-by-over sheet
 narrowly fails concavity in wickets: between 38 and 39 overs remaining
@@ -84,10 +100,22 @@ finished on 232: `result_1992` proves Team 1 wins.
   at a full innings.
 - `ICCStandardTable`: a separable approximation retained as a second
   synthetic instance.
+- `TriangularTable`: a linear-in-wickets witness whose proven concavity
+  certificate inhabits `BallTableFromInterpolation` — the constructor
+  the published table is proven to refute — with examples showing the
+  interpolated instance strictly finer than the over-floor projection.
+- `T20NormalizedTable` and `HundredNormalizedBallTable`: the published
+  data restricted and renormalized to the 20-over and 100-ball spans,
+  inhabiting the span-indexed records away from the ODI anchor. No
+  regulation fidelity is claimed: T20 practice reads the unnormalized
+  table, whose ratios these preserve, and The Hundred runs the
+  Professional Edition.
 - `PowerplayBoostTable`: a what-if constructor that bakes a capped
   fielding-restriction boost into any lawful table and returns a lawful
-  table. The published tables are fitted to real innings and need no
-  such adjustment; target computation never applies it.
+  table, with the innings-level powerplay adjustment proven to coincide
+  with reading the boosted table. The published tables are fitted to
+  real innings and need no such adjustment; target computation never
+  applies it.
 - `DLS_Real`: the real-valued exponential model over `Reals` with
   symbolic monotonicity proofs, quarantined in its own module (the only
   part of the development that inherits the classical axioms of the

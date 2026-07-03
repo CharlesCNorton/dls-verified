@@ -69,12 +69,16 @@ val of_num_uint : uint1 -> int
 
 val div : int -> int -> int
 
+val modulo : int -> int -> int
+
 module Nat :
  sig
   val min : int -> int -> int
  end
 
 val nth : int -> 'a1 list -> 'a1 -> 'a1
+
+val filter : ('a1 -> bool) -> 'a1 list -> 'a1 list
 
 type positive =
 | XI of positive
@@ -121,24 +125,30 @@ module DLS :
 
   val min_overs_for_result : coq_MatchFormat -> overs
 
+  val min_balls_for_result : coq_MatchFormat -> balls
+
   val coq_ODI : coq_MatchFormat
 
   val coq_T20 : coq_MatchFormat
 
   val coq_TheHundred : coq_MatchFormat
 
-  type coq_ResourceTable =
-    overs -> wickets -> resource
-    (* singleton inductive, whose constructor was mkTable *)
+  type coq_ResourceTable = { lookup : (overs -> wickets -> resource);
+                             table_span : overs }
 
   val lookup : coq_ResourceTable -> overs -> wickets -> resource
 
-  type coq_BallResourceTable =
-    balls -> wickets -> scaled_resource
-    (* singleton inductive, whose constructor was mkBallTable *)
+  val table_span : coq_ResourceTable -> overs
+
+  type coq_BallResourceTable = { ball_lookup : (balls -> wickets ->
+                                               scaled_resource);
+                                 ball_table_span : balls }
 
   val ball_lookup :
     coq_BallResourceTable -> balls -> wickets -> scaled_resource
+
+  val interpolate_resource :
+    coq_ResourceTable -> balls -> wickets -> scaled_resource
 
   type coq_InningsPhase =
   | NotStarted
@@ -186,11 +196,19 @@ module DLS :
 
   val det_balls_allocated : coq_DetailedInningsState -> balls
 
+  val det_phase : coq_DetailedInningsState -> coq_InningsPhase
+
   val overs_remaining : coq_InningsState -> overs
 
   val det_balls_remaining : coq_DetailedInningsState -> balls
 
   val is_complete : coq_InningsState -> bool
+
+  val is_det_complete : coq_DetailedInningsState -> bool
+
+  val is_all_out : coq_InningsState -> bool
+
+  val is_det_all_out : coq_DetailedInningsState -> bool
 
   val resources_available : coq_ResourceTable -> coq_InningsState -> resource
 
@@ -217,6 +235,8 @@ module DLS :
 
   val int_overs_lost : coq_Interruption -> overs
 
+  val int_during_innings : coq_Interruption -> int
+
   val resource_lost_by_interruption :
     coq_ResourceTable -> coq_Interruption -> resource
 
@@ -225,6 +245,9 @@ module DLS :
 
   val effective_resources :
     coq_ResourceTable -> resource -> coq_Interruption list -> resource
+
+  val interruptions_for :
+    int -> coq_Interruption list -> coq_Interruption list
 
   type coq_BallInterruption = { bint_at_balls : balls;
                                 bint_at_wickets : wickets;
@@ -238,6 +261,8 @@ module DLS :
 
   val bint_balls_lost : coq_BallInterruption -> balls
 
+  val bint_during_innings : coq_BallInterruption -> int
+
   val ball_resource_lost_by_interruption :
     coq_BallResourceTable -> coq_BallInterruption -> scaled_resource
 
@@ -247,6 +272,9 @@ module DLS :
   val effective_ball_resources :
     coq_BallResourceTable -> scaled_resource -> coq_BallInterruption list ->
     scaled_resource
+
+  val ball_interruptions_for :
+    int -> coq_BallInterruption list -> coq_BallInterruption list
 
   val revised_target_method1 : runs -> resource -> resource -> runs
 
@@ -286,7 +314,8 @@ module DLS :
   | NoResult
   | Abandoned
 
-  val determine_result : runs -> runs -> bool -> bool -> coq_MatchResult
+  val determine_result :
+    runs -> runs -> bool -> bool -> bool -> coq_MatchResult
 
   val par_result : runs -> runs -> bool -> coq_MatchResult
 
@@ -308,6 +337,10 @@ module DLS :
   val match_t2_interruptions : coq_MatchState -> coq_Interruption list
 
   val match_g50 : coq_MatchState -> int
+
+  val match_of_history :
+    coq_MatchFormat -> coq_InningsState -> coq_InningsState ->
+    coq_Interruption list -> int -> coq_MatchState
 
   val compute_target : coq_ResourceTable -> coq_MatchState -> runs
 
@@ -337,6 +370,25 @@ module DLS :
 
   val decide_match : coq_ResourceTable -> coq_MatchState -> coq_MatchResult
 
+  val min_balls_met_det : coq_DetailedInningsState -> coq_MatchFormat -> bool
+
+  val ball_decide_match :
+    coq_BallResourceTable -> coq_MatchFormat -> coq_DetailedInningsState ->
+    coq_DetailedInningsState -> coq_BallInterruption list ->
+    coq_BallInterruption list -> int -> coq_MatchResult
+
+  val interpolate_ball_lookup :
+    coq_ResourceTable -> balls -> wickets -> scaled_resource
+
+  val coq_BallTableFromInterpolation :
+    coq_ResourceTable -> coq_BallResourceTable
+
+  val tri_lookup : overs -> wickets -> resource
+
+  val coq_TriangularTable : coq_ResourceTable
+
+  val coq_TriangularBallTable : coq_BallResourceTable
+
   val icc_w_factor : wickets -> int
 
   val icc_u_factor : overs -> int
@@ -356,6 +408,14 @@ module DLS :
   val dl_std_over_lookup : overs -> wickets -> resource
 
   val coq_DLStandardTable : coq_ResourceTable
+
+  val t20_norm_lookup : overs -> wickets -> resource
+
+  val coq_T20NormalizedTable : coq_ResourceTable
+
+  val hundred_norm_ball_lookup : balls -> wickets -> scaled_resource
+
+  val coq_HundredNormalizedBallTable : coq_BallResourceTable
  end
 
 module DLS_Extras :
@@ -363,4 +423,6 @@ module DLS_Extras :
   val england_1992 : DLS.coq_DetailedInningsState
 
   val sa_rain_1992 : DLS.coq_BallInterruption
+
+  val south_africa_1992 : DLS.coq_DetailedInningsState
  end

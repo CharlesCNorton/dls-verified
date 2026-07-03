@@ -230,6 +230,10 @@ let of_num_uint = function
 
 let div = (fun a b -> if b = 0 then 0 else a / b)
 
+(** val modulo : int -> int -> int **)
+
+let modulo = (fun a b -> if b = 0 then a else a mod b)
+
 module Nat =
  struct
   (** val min : int -> int -> int **)
@@ -248,6 +252,12 @@ let rec nth n0 l default =
               | [] -> default
               | _::l' -> nth m l' default)
     n0
+
+(** val filter : ('a1 -> bool) -> 'a1 list -> 'a1 list **)
+
+let rec filter f = function
+| [] -> []
+| x::l0 -> if f x then x::(filter f l0) else filter f l0
 
 type positive =
 | XI of positive
@@ -309,6 +319,11 @@ module DLS =
 
   let min_overs_for_result m =
     m.min_overs_for_result
+
+  (** val min_balls_for_result : coq_MatchFormat -> balls **)
+
+  let min_balls_for_result m =
+    m.min_balls_for_result
 
   (** val coq_ODI : coq_MatchFormat **)
 
@@ -424,24 +439,227 @@ module DLS =
       (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
       (succ (succ (succ (succ (succ 0))))))))))))))))))))))))) }
 
-  type coq_ResourceTable =
-    overs -> wickets -> resource
-    (* singleton inductive, whose constructor was mkTable *)
+  type coq_ResourceTable = { lookup : (overs -> wickets -> resource);
+                             table_span : overs }
 
   (** val lookup : coq_ResourceTable -> overs -> wickets -> resource **)
 
   let lookup r =
-    r
+    r.lookup
 
-  type coq_BallResourceTable =
-    balls -> wickets -> scaled_resource
-    (* singleton inductive, whose constructor was mkBallTable *)
+  (** val table_span : coq_ResourceTable -> overs **)
+
+  let table_span r =
+    r.table_span
+
+  type coq_BallResourceTable = { ball_lookup : (balls -> wickets ->
+                                               scaled_resource);
+                                 ball_table_span : balls }
 
   (** val ball_lookup :
       coq_BallResourceTable -> balls -> wickets -> scaled_resource **)
 
   let ball_lookup b0 =
-    b0
+    b0.ball_lookup
+
+  (** val interpolate_resource :
+      coq_ResourceTable -> balls -> wickets -> scaled_resource **)
+
+  let interpolate_resource tbl b w =
+    let o = div b (succ (succ (succ (succ (succ (succ 0)))))) in
+    let rem = modulo b (succ (succ (succ (succ (succ (succ 0)))))) in
+    let r_floor = tbl.lookup o w in
+    let r_ceil = tbl.lookup (add o (succ 0)) w in
+    add
+      (mul r_floor (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ
+        0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+      (div
+        (mul rem
+          (mul (sub r_ceil r_floor) (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ
+            0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+        (succ (succ (succ (succ (succ (succ 0)))))))
 
   type coq_InningsPhase =
   | NotStarted
@@ -516,6 +734,11 @@ module DLS =
   let det_balls_allocated d =
     d.det_balls_allocated
 
+  (** val det_phase : coq_DetailedInningsState -> coq_InningsPhase **)
+
+  let det_phase d =
+    d.det_phase
+
   (** val overs_remaining : coq_InningsState -> overs **)
 
   let overs_remaining inn =
@@ -537,40 +760,64 @@ module DLS =
       then true
       else eqb inn.inn_overs_faced inn.inn_overs_allocated
 
+  (** val is_det_complete : coq_DetailedInningsState -> bool **)
+
+  let is_det_complete det =
+    match det.det_phase with
+    | Completed -> true
+    | _ ->
+      if eqb det.det_wickets (succ (succ (succ (succ (succ (succ (succ (succ
+           (succ (succ 0))))))))))
+      then true
+      else eqb det.det_balls_faced det.det_balls_allocated
+
+  (** val is_all_out : coq_InningsState -> bool **)
+
+  let is_all_out inn =
+    eqb inn.inn_wickets (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ 0))))))))))
+
+  (** val is_det_all_out : coq_DetailedInningsState -> bool **)
+
+  let is_det_all_out det =
+    eqb det.det_wickets (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ 0))))))))))
+
   (** val resources_available :
       coq_ResourceTable -> coq_InningsState -> resource **)
 
   let resources_available tbl inn =
-    tbl (overs_remaining inn) inn.inn_wickets
+    tbl.lookup (overs_remaining inn) inn.inn_wickets
 
   (** val resources_used :
       coq_ResourceTable -> coq_InningsState -> resource **)
 
   let resources_used tbl inn =
-    sub (tbl inn.inn_overs_allocated 0) (resources_available tbl inn)
+    sub (tbl.lookup inn.inn_overs_allocated 0) (resources_available tbl inn)
 
   (** val resources_at_start : coq_ResourceTable -> overs -> resource **)
 
   let resources_at_start tbl allocated =
-    tbl allocated 0
+    tbl.lookup allocated 0
 
   (** val ball_resources_available :
       coq_BallResourceTable -> coq_DetailedInningsState -> scaled_resource **)
 
   let ball_resources_available tbl det =
-    tbl (det_balls_remaining det) det.det_wickets
+    tbl.ball_lookup (det_balls_remaining det) det.det_wickets
 
   (** val ball_resources_used :
       coq_BallResourceTable -> coq_DetailedInningsState -> scaled_resource **)
 
   let ball_resources_used tbl det =
-    sub (tbl det.det_balls_allocated 0) (ball_resources_available tbl det)
+    sub (tbl.ball_lookup det.det_balls_allocated 0)
+      (ball_resources_available tbl det)
 
   (** val ball_resources_at_start :
       coq_BallResourceTable -> balls -> scaled_resource **)
 
   let ball_resources_at_start tbl allocated_balls =
-    tbl allocated_balls 0
+    tbl.ball_lookup allocated_balls 0
 
   type coq_Interruption = { int_at_overs : overs; int_at_wickets : wickets;
                             int_overs_lost : overs; int_during_innings : 
@@ -591,13 +838,18 @@ module DLS =
   let int_overs_lost i =
     i.int_overs_lost
 
+  (** val int_during_innings : coq_Interruption -> int **)
+
+  let int_during_innings i =
+    i.int_during_innings
+
   (** val resource_lost_by_interruption :
       coq_ResourceTable -> coq_Interruption -> resource **)
 
   let resource_lost_by_interruption tbl int =
-    let before = tbl int.int_at_overs int.int_at_wickets in
+    let before = tbl.lookup int.int_at_overs int.int_at_wickets in
     let after =
-      tbl (sub int.int_at_overs int.int_overs_lost) int.int_at_wickets
+      tbl.lookup (sub int.int_at_overs int.int_overs_lost) int.int_at_wickets
     in
     sub before after
 
@@ -614,6 +866,12 @@ module DLS =
 
   let effective_resources tbl base ints =
     sub base (total_resources_lost tbl ints)
+
+  (** val interruptions_for :
+      int -> coq_Interruption list -> coq_Interruption list **)
+
+  let interruptions_for k ints =
+    filter (fun i -> eqb i.int_during_innings k) ints
 
   type coq_BallInterruption = { bint_at_balls : balls;
                                 bint_at_wickets : wickets;
@@ -636,13 +894,19 @@ module DLS =
   let bint_balls_lost b =
     b.bint_balls_lost
 
+  (** val bint_during_innings : coq_BallInterruption -> int **)
+
+  let bint_during_innings b =
+    b.bint_during_innings
+
   (** val ball_resource_lost_by_interruption :
       coq_BallResourceTable -> coq_BallInterruption -> scaled_resource **)
 
   let ball_resource_lost_by_interruption tbl int =
-    let before = tbl int.bint_at_balls int.bint_at_wickets in
+    let before = tbl.ball_lookup int.bint_at_balls int.bint_at_wickets in
     let after =
-      tbl (sub int.bint_at_balls int.bint_balls_lost) int.bint_at_wickets
+      tbl.ball_lookup (sub int.bint_at_balls int.bint_balls_lost)
+        int.bint_at_wickets
     in
     sub before after
 
@@ -661,6 +925,12 @@ module DLS =
 
   let effective_ball_resources tbl base ints =
     sub base (total_ball_resources_lost tbl ints)
+
+  (** val ball_interruptions_for :
+      int -> coq_BallInterruption list -> coq_BallInterruption list **)
+
+  let ball_interruptions_for k ints =
+    filter (fun i -> eqb i.bint_during_innings k) ints
 
   (** val revised_target_method1 : runs -> resource -> resource -> runs **)
 
@@ -963,18 +1233,20 @@ module DLS =
   | Abandoned
 
   (** val determine_result :
-      runs -> runs -> bool -> bool -> coq_MatchResult **)
+      runs -> runs -> bool -> bool -> bool -> coq_MatchResult **)
 
-  let determine_result target t2_score t2_completed min_overs_met0 =
-    if negb min_overs_met0
-    then NoResult
-    else if negb t2_completed
-         then if ltb t2_score target then NoResult else Team2Wins
-         else if leb target t2_score
-              then Team2Wins
-              else if eqb (add t2_score (succ 0)) target
-                   then Tie
-                   else Team1Wins
+  let determine_result target t2_score t2_completed t2_all_out min_overs_met0 =
+    if leb target t2_score
+    then Team2Wins
+    else if t2_all_out
+         then if eqb (add t2_score (succ 0)) target then Tie else Team1Wins
+         else if negb min_overs_met0
+              then NoResult
+              else if negb t2_completed
+                   then NoResult
+                   else if eqb (add t2_score (succ 0)) target
+                        then Tie
+                        else Team1Wins
 
   (** val par_result : runs -> runs -> bool -> coq_MatchResult **)
 
@@ -1022,6 +1294,16 @@ module DLS =
   let match_g50 m =
     m.match_g50
 
+  (** val match_of_history :
+      coq_MatchFormat -> coq_InningsState -> coq_InningsState ->
+      coq_Interruption list -> int -> coq_MatchState **)
+
+  let match_of_history fmt t1 t2 history g50 =
+    { match_format = fmt; match_t1 = t1; match_t2 = t2;
+      match_t1_interruptions = (interruptions_for (succ 0) history);
+      match_t2_interruptions = (interruptions_for (succ (succ 0)) history);
+      match_g50 = g50 }
+
   (** val compute_target : coq_ResourceTable -> coq_MatchState -> runs **)
 
   let compute_target tbl m =
@@ -1053,7 +1335,8 @@ module DLS =
   let compute_result tbl m =
     let target = compute_target tbl m in
     let t2 = m.match_t2 in
-    determine_result target t2.inn_score (is_complete t2) (min_overs_met m)
+    determine_result target t2.inn_score (is_complete t2) (is_all_out t2)
+      (min_overs_met m)
 
   (** val coq_Z0_asymptotic : wickets -> int **)
 
@@ -2673,7 +2956,12 @@ module DLS =
   (** val coq_RationalDecayTable : coq_ResourceTable **)
 
   let coq_RationalDecayTable =
-    dls_lookup
+    { lookup = dls_lookup; table_span = (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))) }
 
   (** val dummy_lookup : overs -> wickets -> resource **)
 
@@ -2817,7 +3105,12 @@ module DLS =
   (** val coq_DummyTable : coq_ResourceTable **)
 
   let coq_DummyTable =
-    dummy_lookup
+    { lookup = dummy_lookup; table_span = (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))) }
 
   (** val ended_by_stoppage : coq_InningsPhase -> bool **)
 
@@ -2830,12 +3123,92 @@ module DLS =
       coq_ResourceTable -> coq_MatchState -> coq_MatchResult **)
 
   let decide_match tbl m =
-    if negb (min_overs_met m)
-    then NoResult
-    else if ended_by_stoppage m.match_t2.inn_phase
-         then par_result (compute_par tbl m) m.match_t2.inn_score true
-         else determine_result (compute_target tbl m) m.match_t2.inn_score
-                (is_complete m.match_t2) true
+    if ended_by_stoppage m.match_t2.inn_phase
+    then if negb (min_overs_met m)
+         then NoResult
+         else par_result (compute_par tbl m) m.match_t2.inn_score true
+    else determine_result (compute_target tbl m) m.match_t2.inn_score
+           (is_complete m.match_t2) (is_all_out m.match_t2) (min_overs_met m)
+
+  (** val min_balls_met_det :
+      coq_DetailedInningsState -> coq_MatchFormat -> bool **)
+
+  let min_balls_met_det det fmt =
+    leb fmt.min_balls_for_result det.det_balls_faced
+
+  (** val ball_decide_match :
+      coq_BallResourceTable -> coq_MatchFormat -> coq_DetailedInningsState ->
+      coq_DetailedInningsState -> coq_BallInterruption list ->
+      coq_BallInterruption list -> int -> coq_MatchResult **)
+
+  let ball_decide_match tbl fmt t1 t2 t1_ints t2_ints g50 =
+    if ended_by_stoppage t2.det_phase
+    then if negb (min_balls_met_det t2 fmt)
+         then NoResult
+         else par_result (ball_par_from_states tbl t1 t2 t1_ints t2_ints g50)
+                t2.det_score true
+    else determine_result
+           (ball_target_from_states tbl t1 t2.det_balls_allocated t1_ints
+             t2_ints g50)
+           t2.det_score (is_det_complete t2) (is_det_all_out t2)
+           (min_balls_met_det t2 fmt)
+
+  (** val interpolate_ball_lookup :
+      coq_ResourceTable -> balls -> wickets -> scaled_resource **)
+
+  let interpolate_ball_lookup tbl b w =
+    div
+      (interpolate_resource tbl
+        (Nat.min b
+          (mul tbl.table_span (succ (succ (succ (succ (succ (succ 0))))))))
+        w)
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ
+      0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+
+  (** val coq_BallTableFromInterpolation :
+      coq_ResourceTable -> coq_BallResourceTable **)
+
+  let coq_BallTableFromInterpolation tbl =
+    { ball_lookup = (interpolate_ball_lookup tbl); ball_table_span =
+      (mul tbl.table_span (succ (succ (succ (succ (succ (succ 0))))))) }
+
+  (** val tri_lookup : overs -> wickets -> resource **)
+
+  let tri_lookup u w =
+    mul
+      (mul
+        (Nat.min u (succ (succ (succ (succ (succ (succ (succ (succ (succ
+          (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+          (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+          (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+          (succ (succ (succ (succ (succ (succ (succ (succ
+          0)))))))))))))))))))))))))))))))))))))))))))))))))))
+        (succ (succ 0)))
+      (sub (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        0)))))))))) w)
+
+  (** val coq_TriangularTable : coq_ResourceTable **)
+
+  let coq_TriangularTable =
+    { lookup = tri_lookup; table_span = (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))) }
+
+  (** val coq_TriangularBallTable : coq_BallResourceTable **)
+
+  let coq_TriangularBallTable =
+    coq_BallTableFromInterpolation coq_TriangularTable
 
   (** val icc_w_factor : wickets -> int **)
 
@@ -22741,7 +23114,12 @@ module DLS =
   (** val coq_ICCStandardTable : coq_ResourceTable **)
 
   let coq_ICCStandardTable =
-    icc_lookup
+    { lookup = icc_lookup; table_span = (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))) }
 
   (** val dl2002_data : n list list **)
 
@@ -25079,7 +25457,33 @@ module DLS =
   (** val coq_DLStandardBallTable : coq_BallResourceTable **)
 
   let coq_DLStandardBallTable =
-    dl_std_ball_lookup
+    { ball_lookup = dl_std_ball_lookup; ball_table_span = (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) }
 
   (** val dl_std_over_lookup : overs -> wickets -> resource **)
 
@@ -25089,7 +25493,185 @@ module DLS =
   (** val coq_DLStandardTable : coq_ResourceTable **)
 
   let coq_DLStandardTable =
-    dl_std_over_lookup
+    { lookup = dl_std_over_lookup; table_span = (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))) }
+
+  (** val t20_norm_lookup : overs -> wickets -> resource **)
+
+  let t20_norm_lookup u w =
+    div
+      (mul
+        (dl2002_cell
+          (mul
+            (Nat.min u (succ (succ (succ (succ (succ (succ (succ (succ (succ
+              (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+              (succ 0)))))))))))))))))))))
+            (succ (succ (succ (succ (succ (succ 0)))))))
+          w)
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+      (dl2002_cell (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ
+        0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+        0)
+
+  (** val coq_T20NormalizedTable : coq_ResourceTable **)
+
+  let coq_T20NormalizedTable =
+    { lookup = t20_norm_lookup; table_span = (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ 0)))))))))))))))))))) }
+
+  (** val hundred_norm_ball_lookup : balls -> wickets -> scaled_resource **)
+
+  let hundred_norm_ball_lookup b w =
+    div
+      (mul
+        (dl2002_cell
+          (Nat.min b (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+            (succ (succ (succ
+            0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+          w)
+        (of_num_uint (UIntDecimal (D1 (D0 (D0 (D0 (D0 Nil))))))))
+      (dl2002_cell (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+        (succ (succ (succ
+        0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+        0)
+
+  (** val coq_HundredNormalizedBallTable : coq_BallResourceTable **)
+
+  let coq_HundredNormalizedBallTable =
+    { ball_lookup = hundred_norm_ball_lookup; ball_table_span = (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ
+      0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) }
  end
 
 module DLS_Extras =
@@ -25181,4 +25763,80 @@ module DLS_Extras =
       (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
       0)))))))))))); DLS.bint_during_innings = (succ (succ 0));
       DLS.bint_in_powerplay = false }
+
+  (** val south_africa_1992 : DLS.coq_DetailedInningsState **)
+
+  let south_africa_1992 =
+    { DLS.det_score = (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ
+      0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+      DLS.det_wickets = (succ (succ (succ (succ (succ (succ 0))))));
+      DLS.det_balls_faced = (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+      DLS.det_balls_allocated = (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+      DLS.det_phase = DLS.Completed; DLS.det_powerplay = DLS.NoPowerplay;
+      DLS.det_in_powerplay = false; DLS.det_powerplay_balls_remaining = 0 }
  end

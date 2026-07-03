@@ -119,8 +119,11 @@ Definition TheHundred : MatchFormat := {|
 (*                        RESOURCE TABLE STRUCTURE                            *)
 (******************************************************************************)
 
+(* The span is the full-innings allocation the table is normalized at, so non-ODI formats can inhabit the record. *)
 Record ResourceTable := mkTable {
   lookup : overs -> wickets -> resource;
+
+  table_span : overs;
 
   table_overs_mono : forall u1 u2 w,
     u1 <= u2 -> lookup u1 w <= lookup u2 w;
@@ -132,7 +135,7 @@ Record ResourceTable := mkTable {
 
   table_no_overs : forall w, lookup 0 w = 0;
 
-  table_full_odi : lookup 50 0 = 1000
+  table_full : lookup table_span 0 = 1000
 }.
 
 Definition resource_pct (tbl : ResourceTable) (o : overs) (w : wickets) : resource :=
@@ -140,6 +143,8 @@ Definition resource_pct (tbl : ResourceTable) (o : overs) (w : wickets) : resour
 
 Record BallResourceTable := mkBallTable {
   ball_lookup : balls -> wickets -> scaled_resource;
+
+  ball_table_span : balls;
 
   ball_table_mono : forall b1 b2 w,
     b1 <= b2 -> ball_lookup b1 w <= ball_lookup b2 w;
@@ -151,7 +156,7 @@ Record BallResourceTable := mkBallTable {
 
   ball_table_no_balls : forall w, ball_lookup 0 w = 0;
 
-  ball_table_full_odi : ball_lookup 300 0 = 10000
+  ball_table_full : ball_lookup ball_table_span 0 = 10000
 }.
 
 Definition ball_resource_pct (tbl : BallResourceTable) (b : balls) (w : wickets) : scaled_resource :=
@@ -181,6 +186,19 @@ Proof.
   refine {| g50_value := 245 |}.
   lia.
 Defined.
+
+(* Regulations clause 1.12: 200 for associates, women's ODIs and U15. *)
+Definition associates_G50 : G50Config.
+Proof.
+  refine {| g50_value := 200 |}.
+  lia.
+Defined.
+
+Example standard_G50_value : g50_value standard_G50 = 245.
+Proof. reflexivity. Qed.
+
+Example associates_G50_value : g50_value associates_G50 = 200.
+Proof. reflexivity. Qed.
 
 (******************************************************************************)
 (*                            INNINGS STATE                                  *)
@@ -282,6 +300,12 @@ Definition is_det_complete (det : DetailedInningsState) : bool :=
   | Completed => true
   | _ => (det_wickets det =? 10) || (det_balls_faced det =? det_balls_allocated det)
   end.
+
+Definition is_all_out (inn : InningsState) : bool :=
+  inn_wickets inn =? 10.
+
+Definition is_det_all_out (det : DetailedInningsState) : bool :=
+  det_wickets det =? 10.
 
 Definition in_powerplay (inn : InningsState) : bool :=
   match inn_powerplay inn with
@@ -425,6 +449,10 @@ Definition effective_resources
   (tbl : ResourceTable) (base : resource) (ints : list Interruption) : resource :=
   base - total_resources_lost tbl ints.
 
+(* A match history is one list; int_during_innings tags each suspension with its innings. *)
+Definition interruptions_for (k : nat) (ints : list Interruption) : list Interruption :=
+  filter (fun i => int_during_innings i =? k) ints.
+
 Record BallInterruption := mkBallInterrupt {
   bint_at_balls : balls;
   bint_at_wickets : wickets;
@@ -449,6 +477,9 @@ Fixpoint total_ball_resources_lost
 Definition effective_ball_resources
   (tbl : BallResourceTable) (base : scaled_resource) (ints : list BallInterruption) : scaled_resource :=
   base - total_ball_resources_lost tbl ints.
+
+Definition ball_interruptions_for (k : nat) (ints : list BallInterruption) : list BallInterruption :=
+  filter (fun i => bint_during_innings i =? k) ints.
 
 Definition convert_to_ball_interruption (int : Interruption) : BallInterruption := {|
   bint_at_balls := int_at_overs int * 6;
@@ -698,20 +729,18 @@ Definition result_to_nat (r : MatchResult) : nat :=
 Definition result_eq_dec : forall r1 r2 : MatchResult, {r1 = r2} + {r1 <> r2} :=
   MatchResult_eq_dec.
 
-(* Clause 2: the target is the minimum winning score, so a completed chase that reaches it wins and one run short ties. *)
+(* Clause 2: the target is the minimum winning score, so reaching it wins and one run short ties; the playing conditions exempt a chase that reaches the target or is dismissed from the minimum-overs requirement, which otherwise gates the result. *)
 Definition determine_result
   (target t2_score : runs)
-  (t2_completed : bool)
+  (t2_completed t2_all_out : bool)
   (min_overs_met : bool) : MatchResult :=
-  if negb min_overs_met then
-    NoResult
-  else if negb t2_completed then
-    if t2_score <? target then NoResult
-    else Team2Wins
-  else
-    if target <=? t2_score then Team2Wins
-    else if t2_score + 1 =? target then Tie
-    else Team1Wins.
+  if target <=? t2_score then Team2Wins
+  else if t2_all_out then
+    if t2_score + 1 =? target then Tie else Team1Wins
+  else if negb min_overs_met then NoResult
+  else if negb t2_completed then NoResult
+  else if t2_score + 1 =? target then Tie
+  else Team1Wins.
 
 Definition par_result
   (par t2_score : runs)
@@ -745,6 +774,18 @@ Definition initial_match (fmt : MatchFormat) (g50 : nat) : MatchState := {|
   match_g50 := g50
 |}.
 
+(* A single tagged history drives the whole pipeline: each innings reads exactly its own suspensions. *)
+Definition match_of_history
+  (fmt : MatchFormat) (t1 t2 : InningsState)
+  (history : list Interruption) (g50 : nat) : MatchState := {|
+  match_format := fmt;
+  match_t1 := t1;
+  match_t2 := t2;
+  match_t1_interruptions := interruptions_for 1 history;
+  match_t2_interruptions := interruptions_for 2 history;
+  match_g50 := g50
+|}.
+
 Definition compute_target (tbl : ResourceTable) (m : MatchState) : runs :=
   target_from_states tbl
     (match_t1 m)
@@ -752,6 +793,13 @@ Definition compute_target (tbl : ResourceTable) (m : MatchState) : runs :=
     (match_t1_interruptions m)
     (match_t2_interruptions m)
     (match_g50 m).
+
+Theorem match_of_history_target :
+  forall tbl fmt t1 t2 history g50,
+    compute_target tbl (match_of_history fmt t1 t2 history g50) =
+    target_from_states tbl t1 (inn_overs_allocated t2)
+      (interruptions_for 1 history) (interruptions_for 2 history) g50.
+Proof. reflexivity. Qed.
 
 (* Clause 5.5: R2_used excludes resources removed by Team 2 suspensions, which were neither used nor remain available. *)
 Definition compute_par (tbl : ResourceTable) (m : MatchState) : runs :=
@@ -786,7 +834,7 @@ Definition min_overs_met (m : MatchState) : bool :=
 Definition compute_result (tbl : ResourceTable) (m : MatchState) : MatchResult :=
   let target := compute_target tbl m in
   let t2 := match_t2 m in
-  determine_result target (inn_score t2) (is_complete t2) (min_overs_met m).
+  determine_result target (inn_score t2) (is_complete t2) (is_all_out t2) (min_overs_met m).
 
 (******************************************************************************)
 (*                      WELL-FORMEDNESS PREDICATES                           *)
@@ -833,12 +881,43 @@ Fixpoint valid_interruption_seq
       valid_interruption_seq (int_at_wickets i) (int_at_overs i - int_overs_lost i) rest
   end.
 
+(* The innings position the history leaves off at: overs remaining after the last resumption, wickets at the last suspension. *)
+Fixpoint seq_final_overs (r : overs) (ints : list Interruption) : overs :=
+  match ints with
+  | [] => r
+  | i :: rest => seq_final_overs (int_at_overs i - int_overs_lost i) rest
+  end.
+
+Fixpoint seq_final_wickets (w : wickets) (ints : list Interruption) : wickets :=
+  match ints with
+  | [] => w
+  | i :: rest => seq_final_wickets (int_at_wickets i) rest
+  end.
+
+(* The innings has moved past its recorded suspensions; elapsed overs count removed ones, so overs remaining sit at or below the last resumption point. *)
+Definition innings_after_interruptions (inn : InningsState) (ints : list Interruption) : Prop :=
+  overs_remaining inn <= seq_final_overs (inn_overs_allocated inn) ints /\
+  seq_final_wickets 0 ints <= inn_wickets inn.
+
 Definition valid_match (m : MatchState) : Prop :=
   valid_innings (match_t1 m) (match_format m) /\
   valid_innings (match_t2 m) (match_format m) /\
   valid_interruption_seq 0 (inn_overs_allocated (match_t1 m)) (match_t1_interruptions m) /\
   valid_interruption_seq 0 (inn_overs_allocated (match_t2 m)) (match_t2_interruptions m) /\
+  innings_after_interruptions (match_t1 m) (match_t1_interruptions m) /\
+  innings_after_interruptions (match_t2 m) (match_t2_interruptions m) /\
   match_g50 m > 0.
+
+(* Any regulation G50 configuration yields a well-formed fresh match: the positivity field discharges the validity clause. *)
+Lemma initial_match_valid :
+  forall fmt cfg,
+    valid_match (initial_match fmt (g50_value cfg)).
+Proof.
+  intros fmt cfg.
+  unfold valid_match, initial_match, valid_innings, valid_wickets,
+         innings_after_interruptions, overs_remaining; simpl.
+  repeat split; try exact I; try apply g50_positive; lia.
+Qed.
 
 (* Sequential validity yields the pointwise bound each loss computation needs. *)
 Lemma valid_seq_losses_bounded :
@@ -863,6 +942,149 @@ Example valid_seq_two_interruptions :
          int_overs_lost := 10; int_during_innings := 1 |} ].
 Proof.
   simpl. repeat split; lia.
+Qed.
+
+(* A valid history's losses fit inside the resource drop from its start to its final position. *)
+Lemma valid_seq_losses_le_drop :
+  forall tbl ints w r,
+    valid_interruption_seq w r ints ->
+    total_resources_lost tbl ints +
+      lookup tbl (seq_final_overs r ints) (seq_final_wickets w ints) <=
+    lookup tbl r w.
+Proof.
+  intros tbl ints.
+  induction ints as [|i rest IH]; intros w r Hv; simpl.
+  - lia.
+  - destruct Hv as (H1 & H2 & H3 & H4 & H5).
+    specialize (IH _ _ H5).
+    unfold resource_lost_by_interruption.
+    assert (Hup : lookup tbl (int_at_overs i - int_overs_lost i) (int_at_wickets i) <=
+                  lookup tbl (int_at_overs i) (int_at_wickets i)).
+    { apply table_overs_mono. lia. }
+    assert (Hr : lookup tbl (int_at_overs i) (int_at_wickets i) <= lookup tbl r (int_at_wickets i)).
+    { apply table_overs_mono. exact H1. }
+    assert (Hw : lookup tbl r (int_at_wickets i) <= lookup tbl r w).
+    { apply table_wickets_mono. exact H3. }
+    lia.
+Qed.
+
+(* Clause 5.5 bridge: recorded suspension losses never exceed the resources the innings has used, so the netting in the par accounting is exact rather than truncated. *)
+Lemma valid_seq_losses_le_used :
+  forall tbl inn ints,
+    valid_interruption_seq 0 (inn_overs_allocated inn) ints ->
+    innings_after_interruptions inn ints ->
+    total_resources_lost tbl ints <= resources_used tbl inn.
+Proof.
+  intros tbl inn ints Hv [Hov Hw].
+  unfold resources_used, resources_available, resources_at_start.
+  pose proof (valid_seq_losses_le_drop tbl ints 0 (inn_overs_allocated inn) Hv) as Hdrop.
+  assert (Hcur : lookup tbl (overs_remaining inn) (inn_wickets inn) <=
+                 lookup tbl (seq_final_overs (inn_overs_allocated inn) ints)
+                            (seq_final_wickets 0 ints)).
+  { eapply Nat.le_trans.
+    - apply (table_wickets_mono tbl _ _ _ Hw).
+    - apply table_overs_mono. exact Hov. }
+  lia.
+Qed.
+
+Theorem compute_par_netting_exact :
+  forall tbl m,
+    valid_match m ->
+    (resources_used tbl (match_t2 m) - total_resources_lost tbl (match_t2_interruptions m))
+      + total_resources_lost tbl (match_t2_interruptions m) =
+    resources_used tbl (match_t2 m).
+Proof.
+  intros tbl m Hvalid.
+  destruct Hvalid as (_ & _ & _ & Hseq2 & _ & Hafter2 & _).
+  pose proof (valid_seq_losses_le_used tbl (match_t2 m) (match_t2_interruptions m) Hseq2 Hafter2).
+  lia.
+Qed.
+
+(* Ball-level mirror of the sequenced validity layer for the extracted pipeline. *)
+Fixpoint valid_ball_interruption_seq
+  (wkts_so_far : wickets) (balls_left : balls)
+  (ints : list BallInterruption) : Prop :=
+  match ints with
+  | [] => True
+  | i :: rest =>
+      bint_at_balls i <= balls_left /\
+      bint_balls_lost i <= bint_at_balls i /\
+      wkts_so_far <= bint_at_wickets i /\
+      bint_at_wickets i <= 10 /\
+      valid_ball_interruption_seq (bint_at_wickets i) (bint_at_balls i - bint_balls_lost i) rest
+  end.
+
+Fixpoint ball_seq_final_balls (b : balls) (ints : list BallInterruption) : balls :=
+  match ints with
+  | [] => b
+  | i :: rest => ball_seq_final_balls (bint_at_balls i - bint_balls_lost i) rest
+  end.
+
+Fixpoint ball_seq_final_wickets (w : wickets) (ints : list BallInterruption) : wickets :=
+  match ints with
+  | [] => w
+  | i :: rest => ball_seq_final_wickets (bint_at_wickets i) rest
+  end.
+
+(* Elapsed balls include removed ones, so balls remaining sit at or below the last resumption point. *)
+Definition det_after_interruptions (det : DetailedInningsState) (ints : list BallInterruption) : Prop :=
+  det_balls_remaining det <= ball_seq_final_balls (det_balls_allocated det) ints /\
+  ball_seq_final_wickets 0 ints <= det_wickets det.
+
+Lemma valid_ball_seq_losses_le_drop :
+  forall tbl ints w b,
+    valid_ball_interruption_seq w b ints ->
+    total_ball_resources_lost tbl ints +
+      ball_lookup tbl (ball_seq_final_balls b ints) (ball_seq_final_wickets w ints) <=
+    ball_lookup tbl b w.
+Proof.
+  intros tbl ints.
+  induction ints as [|i rest IH]; intros w b Hv; simpl.
+  - lia.
+  - destruct Hv as (H1 & H2 & H3 & H4 & H5).
+    specialize (IH _ _ H5).
+    unfold ball_resource_lost_by_interruption.
+    assert (Hup : ball_lookup tbl (bint_at_balls i - bint_balls_lost i) (bint_at_wickets i) <=
+                  ball_lookup tbl (bint_at_balls i) (bint_at_wickets i)).
+    { apply ball_table_mono. lia. }
+    assert (Hr : ball_lookup tbl (bint_at_balls i) (bint_at_wickets i) <=
+                 ball_lookup tbl b (bint_at_wickets i)).
+    { apply ball_table_mono. exact H1. }
+    assert (Hw : ball_lookup tbl b (bint_at_wickets i) <= ball_lookup tbl b w).
+    { apply ball_table_wickets_mono. exact H3. }
+    lia.
+Qed.
+
+Lemma valid_ball_seq_losses_le_used :
+  forall tbl det ints,
+    valid_ball_interruption_seq 0 (det_balls_allocated det) ints ->
+    det_after_interruptions det ints ->
+    total_ball_resources_lost tbl ints <= ball_resources_used tbl det.
+Proof.
+  intros tbl det ints Hv [Hb Hw].
+  unfold ball_resources_used, ball_resources_available, ball_resources_at_start.
+  pose proof (valid_ball_seq_losses_le_drop tbl ints 0 (det_balls_allocated det) Hv) as Hdrop.
+  assert (Hcur : ball_lookup tbl (det_balls_remaining det) (det_wickets det) <=
+                 ball_lookup tbl (ball_seq_final_balls (det_balls_allocated det) ints)
+                                 (ball_seq_final_wickets 0 ints)).
+  { eapply Nat.le_trans.
+    - apply (ball_table_wickets_mono tbl _ _ _ Hw).
+    - apply ball_table_mono. exact Hb. }
+  lia.
+Qed.
+
+(* The extracted netting is exact on well-formed chases: nothing is silently truncated. *)
+Theorem ball_resources_used_net_exact :
+  forall tbl det ints,
+    valid_ball_interruption_seq 0 (det_balls_allocated det) ints ->
+    det_after_interruptions det ints ->
+    ball_resources_used_net tbl det ints + total_ball_resources_lost tbl ints =
+    ball_resources_used tbl det.
+Proof.
+  intros tbl det ints Hv Ha.
+  unfold ball_resources_used_net.
+  pose proof (valid_ball_seq_losses_le_used tbl det ints Hv Ha).
+  lia.
 Qed.
 
 (******************************************************************************)
@@ -1002,25 +1224,24 @@ Qed.
 (******************************************************************************)
 
 Theorem result_decidable :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Team1Wins \/
-    determine_result target score completed min_met = Team2Wins \/
-    determine_result target score completed min_met = Tie \/
-    determine_result target score completed min_met = NoResult.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Team1Wins \/
+    determine_result target score completed all_out min_met = Team2Wins \/
+    determine_result target score completed all_out min_met = Tie \/
+    determine_result target score completed all_out min_met = NoResult.
 Proof.
-  intros target score completed min_met.
+  intros target score completed all_out min_met.
   unfold determine_result.
-  destruct min_met; simpl.
-  - destruct completed; simpl.
-    + destruct (target <=? score) eqn:E1.
-      * right. left. reflexivity.
-      * destruct (score + 1 =? target) eqn:E2.
-        -- right. right. left. reflexivity.
-        -- left. reflexivity.
-    + destruct (score <? target) eqn:E1.
-      * right. right. right. reflexivity.
-      * right. left. reflexivity.
-  - right. right. right. reflexivity.
+  destruct (target <=? score); [right; left; reflexivity|].
+  destruct all_out.
+  - destruct (score + 1 =? target);
+      [right; right; left; reflexivity | left; reflexivity].
+  - destruct min_met; simpl.
+    + destruct completed; simpl.
+      * destruct (score + 1 =? target);
+          [right; right; left; reflexivity | left; reflexivity].
+      * right; right; right; reflexivity.
+    + right; right; right; reflexivity.
 Qed.
 
 Theorem result_exhaustive :
@@ -1030,79 +1251,106 @@ Proof.
   intros []; auto.
 Qed.
 
+(* Reaching the target wins in every state: the clause 2 exemption from the minimum-overs requirement. *)
 Theorem team2_wins_iff_reaches_target :
-  forall target score min_met,
-    min_met = true ->
-    determine_result target score true min_met = Team2Wins <-> target <= score.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Team2Wins <->
+    target <= score.
 Proof.
-  intros target score min_met Hmet.
-  subst min_met.
+  intros target score completed all_out min_met.
   unfold determine_result.
-  simpl.
-  split.
-  - intro H.
-    destruct (target <=? score) eqn:E1.
-    + apply Nat.leb_le. exact E1.
-    + destruct (score + 1 =? target); discriminate.
-  - intro H.
-    apply Nat.leb_le in H.
-    rewrite H.
-    reflexivity.
+  destruct (target <=? score) eqn:E1.
+  - apply Nat.leb_le in E1. split; [intros _; exact E1 | reflexivity].
+  - apply Nat.leb_gt in E1.
+    split.
+    + intro H.
+      destruct all_out; [destruct (score + 1 =? target); discriminate|].
+      destruct min_met; simpl in H; [|discriminate].
+      destruct completed; simpl in H; [|discriminate].
+      destruct (score + 1 =? target); discriminate.
+    + lia.
 Qed.
 
 Theorem team1_wins_iff_below_tie_score :
-  forall target score min_met,
+  forall target score all_out min_met,
     min_met = true ->
-    determine_result target score true min_met = Team1Wins <-> score + 1 < target.
+    determine_result target score true all_out min_met = Team1Wins <->
+    score + 1 < target.
 Proof.
-  intros target score min_met Hmet.
+  intros target score all_out min_met Hmet.
   subst min_met.
   unfold determine_result.
-  simpl.
-  split.
-  - intro H.
-    destruct (target <=? score) eqn:E1.
-    + discriminate.
-    + destruct (score + 1 =? target) eqn:E2.
-      * discriminate.
-      * apply Nat.leb_gt in E1. apply Nat.eqb_neq in E2. lia.
-  - intro H.
-    assert (E1: (target <=? score) = false) by (apply Nat.leb_gt; lia).
-    assert (E2: (score + 1 =? target) = false) by (apply Nat.eqb_neq; lia).
-    rewrite E1, E2.
-    reflexivity.
+  destruct (target <=? score) eqn:E1.
+  - apply Nat.leb_le in E1. split; [discriminate | lia].
+  - apply Nat.leb_gt in E1.
+    destruct (score + 1 =? target) eqn:E2.
+    + apply Nat.eqb_eq in E2.
+      destruct all_out; simpl; (split; intros H; [discriminate | exfalso; lia]).
+    + apply Nat.eqb_neq in E2.
+      destruct all_out; simpl; (split; intros _; [lia | reflexivity]).
 Qed.
 
 Theorem tie_iff_one_short_of_target :
-  forall target score min_met,
+  forall target score all_out min_met,
     min_met = true ->
-    determine_result target score true min_met = Tie <-> score + 1 = target.
+    determine_result target score true all_out min_met = Tie <-> score + 1 = target.
 Proof.
-  intros target score min_met Hmet.
+  intros target score all_out min_met Hmet.
   subst min_met.
   unfold determine_result.
-  simpl.
-  split.
-  - intro H.
-    destruct (target <=? score) eqn:E1.
-    + discriminate.
-    + destruct (score + 1 =? target) eqn:E2.
-      * apply Nat.eqb_eq. exact E2.
-      * discriminate.
-  - intro H.
-    assert (E1: (target <=? score) = false) by (apply Nat.leb_gt; lia).
-    assert (E2: (score + 1 =? target) = true) by (apply Nat.eqb_eq; lia).
-    rewrite E1, E2.
-    reflexivity.
+  destruct (target <=? score) eqn:E1.
+  - apply Nat.leb_le in E1. split; [discriminate | intros; exfalso; lia].
+  - apply Nat.leb_gt in E1.
+    destruct (score + 1 =? target) eqn:E2.
+    + apply Nat.eqb_eq in E2.
+      destruct all_out; simpl; (split; intros _; [exact E2 | reflexivity]).
+    + apply Nat.eqb_neq in E2.
+      destruct all_out; simpl; (split; intros H; [discriminate | exfalso; lia]).
+Qed.
+
+(* The exemptions, stated directly. *)
+Theorem target_reached_wins_regardless :
+  forall target score completed all_out min_met,
+    target <= score ->
+    determine_result target score completed all_out min_met = Team2Wins.
+Proof.
+  intros target score completed all_out min_met H.
+  unfold determine_result.
+  apply Nat.leb_le in H. rewrite H. reflexivity.
+Qed.
+
+Theorem all_out_decides_regardless :
+  forall target score completed min_met,
+    determine_result target score completed true min_met =
+    if target <=? score then Team2Wins
+    else if score + 1 =? target then Tie
+    else Team1Wins.
+Proof.
+  intros target score completed min_met.
+  unfold determine_result.
+  destruct (target <=? score); reflexivity.
 Qed.
 
 (* Completed-chase boundary regressions: reaching the target wins, one short ties. *)
 Example completed_chase_at_target_wins :
-  determine_result 235 235 true true = Team2Wins.
+  determine_result 235 235 true false true = Team2Wins.
 Proof. reflexivity. Qed.
 
 Example completed_chase_one_short_ties :
-  determine_result 235 234 true true = Tie.
+  determine_result 235 234 true false true = Tie.
+Proof. reflexivity. Qed.
+
+(* A side bowled out for 90 in 15 overs of an uninterrupted 50-over chase loses; the minimum-overs clause does not void a decided match. *)
+Example bowled_out_early_still_loses :
+  determine_result 200 90 true true false = Team1Wins.
+Proof. reflexivity. Qed.
+
+Example bowled_out_early_one_short_ties :
+  determine_result 200 199 true true false = Tie.
+Proof. reflexivity. Qed.
+
+Example target_reached_below_minimum_wins :
+  determine_result 150 150 false false false = Team2Wins.
 Proof. reflexivity. Qed.
 
 (******************************************************************************)
@@ -1168,10 +1416,10 @@ Qed.
 
 Theorem full_innings_full_resources :
   forall tbl,
-    lookup tbl 50 0 = 1000.
+    lookup tbl (table_span tbl) 0 = 1000.
 Proof.
   intros.
-  apply table_full_odi.
+  apply table_full.
 Qed.
 
 (******************************************************************************)
@@ -1300,76 +1548,71 @@ Proof. reflexivity. Qed.
 (******************************************************************************)
 
 Lemma result_team1_inv :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Team1Wins ->
-    min_met = true /\ completed = true /\ score + 1 < target.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Team1Wins ->
+    score + 1 < target /\
+    (all_out = true \/ (min_met = true /\ completed = true)).
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   unfold determine_result in H.
-  destruct min_met; simpl in H.
-  - destruct completed; simpl in H.
-    + destruct (target <=? score) eqn:E1.
-      * discriminate.
-      * destruct (score + 1 =? target) eqn:E2.
-        -- discriminate.
-        -- apply Nat.leb_gt in E1. apply Nat.eqb_neq in E2.
-           repeat split; auto. lia.
-    + destruct (score <? target); discriminate.
-  - discriminate.
+  destruct (target <=? score) eqn:E1; [discriminate|].
+  apply Nat.leb_gt in E1.
+  destruct all_out.
+  - destruct (score + 1 =? target) eqn:E2; [discriminate|].
+    apply Nat.eqb_neq in E2.
+    split; [lia | left; reflexivity].
+  - destruct min_met; simpl in H; [|discriminate].
+    destruct completed; simpl in H; [|discriminate].
+    destruct (score + 1 =? target) eqn:E2; [discriminate|].
+    apply Nat.eqb_neq in E2.
+    split; [lia | right; split; reflexivity].
 Qed.
 
 Lemma result_team2_inv :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Team2Wins ->
-    min_met = true /\ target <= score.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Team2Wins ->
+    target <= score.
 Proof.
-  intros target score completed min_met H.
-  unfold determine_result in H.
-  destruct min_met; simpl in H; try discriminate.
-  split; [reflexivity|].
-  destruct completed; simpl in H.
-  - destruct (target <=? score) eqn:E1.
-    + apply Nat.leb_le. exact E1.
-    + destruct (score + 1 =? target); discriminate.
-  - destruct (score <? target) eqn:E1.
-    + discriminate.
-    + apply Nat.ltb_ge in E1. lia.
+  intros target score completed all_out min_met H.
+  apply team2_wins_iff_reaches_target in H. exact H.
 Qed.
 
 Lemma result_tie_inv :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Tie ->
-    min_met = true /\ completed = true /\ score + 1 = target.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Tie ->
+    score + 1 = target /\
+    (all_out = true \/ (min_met = true /\ completed = true)).
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   unfold determine_result in H.
-  destruct min_met; simpl in H.
-  - destruct completed; simpl in H.
-    + destruct (target <=? score) eqn:E1.
-      * discriminate.
-      * destruct (score + 1 =? target) eqn:E2.
-        -- apply Nat.eqb_eq in E2. repeat split; auto.
-        -- discriminate.
-    + destruct (score <? target); discriminate.
-  - discriminate.
+  destruct (target <=? score) eqn:E1; [discriminate|].
+  destruct all_out.
+  - destruct (score + 1 =? target) eqn:E2; [|discriminate].
+    apply Nat.eqb_eq in E2.
+    split; [exact E2 | left; reflexivity].
+  - destruct min_met; simpl in H; [|discriminate].
+    destruct completed; simpl in H; [|discriminate].
+    destruct (score + 1 =? target) eqn:E2; [|discriminate].
+    apply Nat.eqb_eq in E2.
+    split; [exact E2 | right; split; reflexivity].
 Qed.
 
 Lemma result_noresult_inv :
-  forall target score completed min_met,
-    determine_result target score completed min_met = NoResult ->
-    min_met = false \/ (completed = false /\ score < target).
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = NoResult ->
+    score < target /\ all_out = false /\ (min_met = false \/ completed = false).
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   unfold determine_result in H.
-  destruct min_met; simpl in H.
-  - destruct completed; simpl in H.
-    + destruct (target <=? score) eqn:E1.
-      * discriminate.
+  destruct (target <=? score) eqn:E1; [discriminate|].
+  apply Nat.leb_gt in E1.
+  destruct all_out.
+  - destruct (score + 1 =? target); discriminate.
+  - destruct min_met; simpl in H.
+    + destruct completed; simpl in H.
       * destruct (score + 1 =? target); discriminate.
-    + destruct (score <? target) eqn:E1.
-      * right. split; auto. apply Nat.ltb_lt. exact E1.
-      * discriminate.
-  - left. reflexivity.
+      * split; [lia | split; [reflexivity | right; reflexivity]].
+    + split; [lia | split; [reflexivity | left; reflexivity]].
 Qed.
 
 (******************************************************************************)
@@ -1628,11 +1871,12 @@ Proof. reflexivity. Qed.
 
 Definition RationalDecayTable : ResourceTable := {|
   lookup := dls_lookup;
+  table_span := 50;
   table_overs_mono := dls_lookup_overs_mono;
   table_wickets_mono := dls_lookup_wickets_mono;
   table_allout := dls_lookup_allout;
   table_no_overs := dls_lookup_no_overs;
-  table_full_odi := dls_lookup_full_odi
+  table_full := dls_lookup_full_odi
 |}.
 
 (* In mid-innings territory the envelope coincides with the raw model. *)
@@ -1782,11 +2026,12 @@ Qed.
 
 Definition DummyTable : ResourceTable := {|
   lookup := dummy_lookup;
+  table_span := 50;
   table_overs_mono := dummy_overs_mono;
   table_wickets_mono := dummy_wickets_mono;
   table_allout := dummy_allout;
   table_no_overs := dummy_no_overs;
-  table_full_odi := dummy_full
+  table_full := dummy_full
 |}.
 
 Definition dummy_ball_lookup (b : balls) (w : wickets) : scaled_resource :=
@@ -1858,11 +2103,12 @@ Qed.
 
 Definition DummyBallTable : BallResourceTable := {|
   ball_lookup := dummy_ball_lookup;
+  ball_table_span := 300;
   ball_table_mono := dummy_ball_mono;
   ball_table_wickets_mono := dummy_ball_wickets_mono;
   ball_table_allout := dummy_ball_allout;
   ball_table_no_balls := dummy_ball_no_balls;
-  ball_table_full_odi := dummy_ball_full
+  ball_table_full := dummy_ball_full
 |}.
 
 (******************************************************************************)
@@ -1956,12 +2202,12 @@ Create HintDb dls.
 #[global] Hint Resolve table_wickets_mono : dls.
 #[global] Hint Resolve table_allout : dls.
 #[global] Hint Resolve table_no_overs : dls.
-#[global] Hint Resolve table_full_odi : dls.
+#[global] Hint Resolve table_full : dls.
 #[global] Hint Resolve ball_table_mono : dls.
 #[global] Hint Resolve ball_table_wickets_mono : dls.
 #[global] Hint Resolve ball_table_allout : dls.
 #[global] Hint Resolve ball_table_no_balls : dls.
-#[global] Hint Resolve ball_table_full_odi : dls.
+#[global] Hint Resolve ball_table_full : dls.
 #[global] Hint Resolve Nat.Div0.div_le_mono : dls.
 #[global] Hint Resolve Nat.mul_le_mono_l : dls.
 #[global] Hint Resolve Nat.mul_le_mono_r : dls.
@@ -2004,60 +2250,60 @@ Theorem result_outcomes_pairwise_distinct :
 Proof. repeat split; discriminate. Qed.
 
 Theorem result_team1_excludes_others :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Team1Wins ->
-    determine_result target score completed min_met <> Team2Wins /\
-    determine_result target score completed min_met <> Tie /\
-    determine_result target score completed min_met <> NoResult /\
-    determine_result target score completed min_met <> Abandoned.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Team1Wins ->
+    determine_result target score completed all_out min_met <> Team2Wins /\
+    determine_result target score completed all_out min_met <> Tie /\
+    determine_result target score completed all_out min_met <> NoResult /\
+    determine_result target score completed all_out min_met <> Abandoned.
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   rewrite H. repeat split; discriminate.
 Qed.
 
 Theorem result_team2_excludes_others :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Team2Wins ->
-    determine_result target score completed min_met <> Team1Wins /\
-    determine_result target score completed min_met <> Tie /\
-    determine_result target score completed min_met <> NoResult /\
-    determine_result target score completed min_met <> Abandoned.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Team2Wins ->
+    determine_result target score completed all_out min_met <> Team1Wins /\
+    determine_result target score completed all_out min_met <> Tie /\
+    determine_result target score completed all_out min_met <> NoResult /\
+    determine_result target score completed all_out min_met <> Abandoned.
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   rewrite H. repeat split; discriminate.
 Qed.
 
 Theorem result_tie_excludes_others :
-  forall target score completed min_met,
-    determine_result target score completed min_met = Tie ->
-    determine_result target score completed min_met <> Team1Wins /\
-    determine_result target score completed min_met <> Team2Wins /\
-    determine_result target score completed min_met <> NoResult /\
-    determine_result target score completed min_met <> Abandoned.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = Tie ->
+    determine_result target score completed all_out min_met <> Team1Wins /\
+    determine_result target score completed all_out min_met <> Team2Wins /\
+    determine_result target score completed all_out min_met <> NoResult /\
+    determine_result target score completed all_out min_met <> Abandoned.
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   rewrite H. repeat split; discriminate.
 Qed.
 
 Theorem result_noresult_excludes_others :
-  forall target score completed min_met,
-    determine_result target score completed min_met = NoResult ->
-    determine_result target score completed min_met <> Team1Wins /\
-    determine_result target score completed min_met <> Team2Wins /\
-    determine_result target score completed min_met <> Tie /\
-    determine_result target score completed min_met <> Abandoned.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met = NoResult ->
+    determine_result target score completed all_out min_met <> Team1Wins /\
+    determine_result target score completed all_out min_met <> Team2Wins /\
+    determine_result target score completed all_out min_met <> Tie /\
+    determine_result target score completed all_out min_met <> Abandoned.
 Proof.
-  intros target score completed min_met H.
+  intros target score completed all_out min_met H.
   rewrite H. repeat split; discriminate.
 Qed.
 
 Theorem determine_result_never_abandoned :
-  forall target score completed min_met,
-    determine_result target score completed min_met <> Abandoned.
+  forall target score completed all_out min_met,
+    determine_result target score completed all_out min_met <> Abandoned.
 Proof.
-  intros target score completed min_met.
+  intros target score completed all_out min_met.
   unfold determine_result.
-  destruct min_met, completed; simpl;
+  destruct all_out, min_met, completed; simpl;
   repeat (destruct (_ <=? _); simpl);
   repeat (destruct (_ =? _); simpl);
   repeat (destruct (_ <? _); simpl);
@@ -2065,36 +2311,38 @@ Proof.
 Qed.
 
 Theorem result_trichotomy_completed :
-  forall target score,
-    let r := determine_result target score true true in
+  forall target score all_out,
+    let r := determine_result target score true all_out true in
     (r = Team1Wins /\ score + 1 < target) \/
     (r = Team2Wins /\ target <= score) \/
     (r = Tie /\ score + 1 = target).
 Proof.
-  intros target score.
+  intros target score all_out.
   unfold determine_result. simpl.
   destruct (target <=? score) eqn:E1.
   - right. left. split; [reflexivity | apply Nat.leb_le; exact E1].
-  - destruct (score + 1 =? target) eqn:E2.
-    + right. right. split; [reflexivity | apply Nat.eqb_eq; exact E2].
-    + left. split; [reflexivity |].
-      apply Nat.leb_gt in E1. apply Nat.eqb_neq in E2. lia.
+  - apply Nat.leb_gt in E1.
+    destruct (score + 1 =? target) eqn:E2.
+    + apply Nat.eqb_eq in E2.
+      destruct all_out; simpl; (right; right; split; [reflexivity | exact E2]).
+    + apply Nat.eqb_neq in E2.
+      destruct all_out; simpl; (left; split; [reflexivity | lia]).
 Qed.
 
 (* The exclusive disjunction form: exactly one of the cases holds *)
 Theorem result_trichotomy_exclusive :
-  forall target score,
-    (determine_result target score true true = Team1Wins ->
-       determine_result target score true true <> Team2Wins /\
-       determine_result target score true true <> Tie) /\
-    (determine_result target score true true = Team2Wins ->
-       determine_result target score true true <> Team1Wins /\
-       determine_result target score true true <> Tie) /\
-    (determine_result target score true true = Tie ->
-       determine_result target score true true <> Team1Wins /\
-       determine_result target score true true <> Team2Wins).
+  forall target score all_out,
+    (determine_result target score true all_out true = Team1Wins ->
+       determine_result target score true all_out true <> Team2Wins /\
+       determine_result target score true all_out true <> Tie) /\
+    (determine_result target score true all_out true = Team2Wins ->
+       determine_result target score true all_out true <> Team1Wins /\
+       determine_result target score true all_out true <> Tie) /\
+    (determine_result target score true all_out true = Tie ->
+       determine_result target score true all_out true <> Team1Wins /\
+       determine_result target score true all_out true <> Team2Wins).
 Proof.
-  intros target score.
+  intros target score all_out.
   split; [|split]; intros H; split; rewrite H; discriminate.
 Qed.
 
@@ -2331,6 +2579,41 @@ Proof.
   - rewrite total_resources_lost_app. rewrite IH. reflexivity.
 Qed.
 
+(* A fully tagged match history partitions by innings with no loss dropped or double-counted. *)
+Lemma total_resources_lost_partition :
+  forall tbl ints,
+    Forall (fun i => int_during_innings i = 1 \/ int_during_innings i = 2) ints ->
+    total_resources_lost tbl (interruptions_for 1 ints) +
+    total_resources_lost tbl (interruptions_for 2 ints) =
+    total_resources_lost tbl ints.
+Proof.
+  intros tbl ints H.
+  induction ints as [|i rest IH].
+  - reflexivity.
+  - inversion H as [|? ? Hi Hrest]; subst.
+    specialize (IH Hrest).
+    unfold interruptions_for in *.
+    simpl.
+    destruct Hi as [H1 | H2]; [rewrite H1 | rewrite H2]; simpl; lia.
+Qed.
+
+Lemma total_ball_resources_lost_partition :
+  forall tbl ints,
+    Forall (fun i => bint_during_innings i = 1 \/ bint_during_innings i = 2) ints ->
+    total_ball_resources_lost tbl (ball_interruptions_for 1 ints) +
+    total_ball_resources_lost tbl (ball_interruptions_for 2 ints) =
+    total_ball_resources_lost tbl ints.
+Proof.
+  intros tbl ints H.
+  induction ints as [|i rest IH].
+  - reflexivity.
+  - inversion H as [|? ? Hi Hrest]; subst.
+    specialize (IH Hrest).
+    unfold ball_interruptions_for in *.
+    simpl.
+    destruct Hi as [H1 | H2]; [rewrite H1 | rewrite H2]; simpl; lia.
+Qed.
+
 (* Multiple non-empty interruptions monotonically decrease effective resources *)
 Theorem effective_resources_anti_monotone :
   forall tbl base ints_more ints_less,
@@ -2439,15 +2722,20 @@ Proof. intros. apply equal_resources_fair_target. exact H. Qed.
 Definition is_abandoned_match (m : MatchState) : bool :=
   negb (min_overs_met m).
 
+(* Below the minimum a match yields no result unless already decided by dismissal or the target. *)
 Theorem abandoned_match_no_result :
   forall tbl m,
     min_overs_met m = false ->
+    is_all_out (match_t2 m) = false ->
+    inn_score (match_t2 m) < compute_target tbl m ->
     compute_result tbl m = NoResult.
 Proof.
-  intros tbl m H.
-  unfold compute_result.
-  unfold determine_result.
-  rewrite H. simpl. reflexivity.
+  intros tbl m Hmin Hout Hscore.
+  unfold compute_result, determine_result; cbv zeta.
+  rewrite Hmin, Hout.
+  assert (E1 : (compute_target tbl m <=? inn_score (match_t2 m)) = false)
+    by (apply Nat.leb_gt; exact Hscore).
+  rewrite E1. reflexivity.
 Qed.
 
 Theorem min_overs_met_iff :
@@ -2464,10 +2752,12 @@ Qed.
 Theorem below_threshold_implies_noresult :
   forall tbl m,
     inn_overs_faced (match_t2 m) < min_overs_for_result (match_format m) ->
+    is_all_out (match_t2 m) = false ->
+    inn_score (match_t2 m) < compute_target tbl m ->
     compute_result tbl m = NoResult.
 Proof.
-  intros tbl m H.
-  apply abandoned_match_no_result.
+  intros tbl m H Hout Hscore.
+  apply abandoned_match_no_result; try assumption.
   unfold min_overs_met.
   apply Nat.leb_gt. exact H.
 Qed.
@@ -2481,15 +2771,16 @@ Theorem above_threshold_completed_definite :
     compute_result tbl m = Tie.
 Proof.
   intros tbl m Hthresh Hcomp.
-  unfold compute_result, determine_result.
+  unfold compute_result, determine_result; cbv zeta.
   assert (Hmet: min_overs_met m = true).
   { unfold min_overs_met. apply Nat.leb_le. exact Hthresh. }
-  rewrite Hmet. rewrite Hcomp. simpl.
+  rewrite Hmet, Hcomp. simpl.
   destruct (compute_target tbl m <=? inn_score (match_t2 m)) eqn:E1.
-  - right. left. reflexivity.
-  - destruct (inn_score (match_t2 m) + 1 =? compute_target tbl m) eqn:E2.
-    + right. right. reflexivity.
-    + left. reflexivity.
+  - right; left; reflexivity.
+  - destruct (is_all_out (match_t2 m));
+      destruct (inn_score (match_t2 m) + 1 =? compute_target tbl m);
+      [ right; right; reflexivity | left; reflexivity
+      | right; right; reflexivity | left; reflexivity ].
 Qed.
 
 (******************************************************************************)
@@ -2505,33 +2796,92 @@ Definition ended_by_stoppage (p : InningsPhase) : bool :=
   end.
 
 Definition decide_match (tbl : ResourceTable) (m : MatchState) : MatchResult :=
-  if negb (min_overs_met m) then NoResult
-  else if ended_by_stoppage (inn_phase (match_t2 m)) then
-    par_result (compute_par tbl m) (inn_score (match_t2 m)) true
+  if ended_by_stoppage (inn_phase (match_t2 m)) then
+    if negb (min_overs_met m) then NoResult
+    else par_result (compute_par tbl m) (inn_score (match_t2 m)) true
   else
     determine_result (compute_target tbl m) (inn_score (match_t2 m))
-      (is_complete (match_t2 m)) true.
+      (is_complete (match_t2 m)) (is_all_out (match_t2 m)) (min_overs_met m).
 
-Theorem decide_match_below_min :
+(* A chase terminated by stoppage below the minimum has no result: the exemptions concern decided chases, which a termination is not. *)
+Theorem decide_match_stopped_below_min :
   forall tbl m,
+    ended_by_stoppage (inn_phase (match_t2 m)) = true ->
     min_overs_met m = false ->
     decide_match tbl m = NoResult.
 Proof.
-  intros tbl m H.
+  intros tbl m Hstop Hmin.
   unfold decide_match.
-  rewrite H. reflexivity.
+  rewrite Hstop, Hmin. reflexivity.
+Qed.
+
+(* Below the minimum an undecided chase yields no result on either branch. *)
+Theorem decide_match_below_min :
+  forall tbl m,
+    min_overs_met m = false ->
+    is_all_out (match_t2 m) = false ->
+    inn_score (match_t2 m) < compute_target tbl m ->
+    decide_match tbl m = NoResult.
+Proof.
+  intros tbl m Hmin Hout Hscore.
+  unfold decide_match.
+  destruct (ended_by_stoppage (inn_phase (match_t2 m))).
+  - rewrite Hmin. reflexivity.
+  - unfold determine_result.
+    rewrite Hmin, Hout.
+    assert (E1 : (compute_target tbl m <=? inn_score (match_t2 m)) = false)
+      by (apply Nat.leb_gt; exact Hscore).
+    rewrite E1. reflexivity.
+Qed.
+
+Theorem decide_match_not_stopped_agrees :
+  forall tbl m,
+    ended_by_stoppage (inn_phase (match_t2 m)) = false ->
+    decide_match tbl m = compute_result tbl m.
+Proof.
+  intros tbl m Hstop.
+  unfold decide_match, compute_result.
+  rewrite Hstop. reflexivity.
 Qed.
 
 Theorem decide_match_completed_agrees :
   forall tbl m,
-    min_overs_met m = true ->
     inn_phase (match_t2 m) = Completed ->
     decide_match tbl m = compute_result tbl m.
 Proof.
-  intros tbl m Hmin Hphase.
-  unfold decide_match, compute_result.
-  rewrite Hmin, Hphase.
-  reflexivity.
+  intros tbl m Hphase.
+  apply decide_match_not_stopped_agrees.
+  unfold ended_by_stoppage. rewrite Hphase. reflexivity.
+Qed.
+
+(* Reaching the target wins on the completed branch whatever the minimum. *)
+Theorem decide_match_target_reached :
+  forall tbl m,
+    ended_by_stoppage (inn_phase (match_t2 m)) = false ->
+    compute_target tbl m <= inn_score (match_t2 m) ->
+    decide_match tbl m = Team2Wins.
+Proof.
+  intros tbl m Hstop Hreach.
+  unfold decide_match. rewrite Hstop.
+  apply target_reached_wins_regardless. exact Hreach.
+Qed.
+
+(* Dismissal decides the chase whatever the minimum. *)
+Theorem decide_match_all_out_below_target :
+  forall tbl m,
+    ended_by_stoppage (inn_phase (match_t2 m)) = false ->
+    is_all_out (match_t2 m) = true ->
+    inn_score (match_t2 m) + 1 < compute_target tbl m ->
+    decide_match tbl m = Team1Wins.
+Proof.
+  intros tbl m Hstop Hout Hlow.
+  unfold decide_match. rewrite Hstop, Hout.
+  rewrite all_out_decides_regardless.
+  assert (E1 : (compute_target tbl m <=? inn_score (match_t2 m)) = false)
+    by (apply Nat.leb_gt; lia).
+  assert (E2 : (inn_score (match_t2 m) + 1 =? compute_target tbl m) = false)
+    by (apply Nat.eqb_neq; lia).
+  rewrite E1, E2. reflexivity.
 Qed.
 
 Theorem decide_match_stopped_par :
@@ -2571,7 +2921,7 @@ Qed.
 
 (* Clause 7.1.1: set 186, Team 2 make 180 and fall 5 short of the 185 tie score; Team 1 win by 5. *)
 Example ecb_example_7_1_1 :
-  determine_result 186 180 true true = Team1Wins /\ 186 - 1 - 180 = 5.
+  determine_result 186 180 true false true = Team1Wins /\ 186 - 1 - 180 = 5.
 Proof. split; reflexivity. Qed.
 
 (* Clause 7.1.2: chasing 201, Team 2 are 115/4 with par 110 when the match is abandoned; Team 2 win by 5. *)
@@ -2593,10 +2943,59 @@ Theorem decide_match_never_abandoned :
 Proof.
   intros tbl m.
   unfold decide_match.
-  destruct (negb (min_overs_met m)); [discriminate|].
   destruct (ended_by_stoppage (inn_phase (match_t2 m))).
-  - apply par_result_never_abandoned.
+  - destruct (negb (min_overs_met m));
+      [discriminate | apply par_result_never_abandoned].
   - apply determine_result_never_abandoned.
+Qed.
+
+(* The par regime cannot rob a chase that had already reached the target: the par sits strictly below it. *)
+Theorem decide_match_stopped_target_reached :
+  forall tbl m,
+    effective_resources tbl
+      (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
+      (match_t1_interruptions m) > 0 ->
+    ended_by_stoppage (inn_phase (match_t2 m)) = true ->
+    min_overs_met m = true ->
+    compute_target tbl m <= inn_score (match_t2 m) ->
+    decide_match tbl m = Team2Wins.
+Proof.
+  intros tbl m HR1 Hstop Hmin Hreach.
+  rewrite (decide_match_stopped_par tbl m Hmin Hstop).
+  assert (Hpar : compute_par tbl m < inn_score (match_t2 m)).
+  { unfold compute_par; cbv zeta.
+    unfold compute_target, target_from_states in Hreach; cbv zeta in Hreach.
+    assert (HR2u : resources_used tbl (match_t2 m) -
+                   total_resources_lost tbl (match_t2_interruptions m) <=
+                   effective_resources tbl
+                     (resources_at_start tbl (inn_overs_allocated (match_t2 m)))
+                     (match_t2_interruptions m)).
+    { unfold resources_used, effective_resources, resources_at_start. lia. }
+    assert (Hmono := par_monotone_in_R2_used (inn_score (match_t1 m))
+                       (effective_resources tbl
+                          (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
+                          (match_t1_interruptions m))
+                       (resources_used tbl (match_t2 m) -
+                        total_resources_lost tbl (match_t2_interruptions m))
+                       (effective_resources tbl
+                          (resources_at_start tbl (inn_overs_allocated (match_t2 m)))
+                          (match_t2_interruptions m))
+                       (match_g50 m) HR1 HR2u).
+    rewrite (revised_target_is_par_plus_one (inn_score (match_t1 m))
+               (effective_resources tbl
+                  (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
+                  (match_t1_interruptions m))
+               (effective_resources tbl
+                  (resources_at_start tbl (inn_overs_allocated (match_t2 m)))
+                  (match_t2_interruptions m))
+               (match_g50 m)) in Hreach.
+    lia. }
+  unfold par_result.
+  assert (E1 : (inn_score (match_t2 m) <? compute_par tbl m) = false)
+    by (apply Nat.ltb_ge; lia).
+  assert (E2 : (compute_par tbl m <? inn_score (match_t2 m)) = true)
+    by (apply Nat.ltb_lt; exact Hpar).
+  rewrite E1, E2. reflexivity.
 Qed.
 
 (* When Team 2's chase holds no further resources, the target is the terminal par plus the regulation one run. *)
@@ -2612,7 +3011,7 @@ Proof.
   apply revised_target_is_par_plus_one.
 Qed.
 
-(* Soundness bundle over well-formed match states: the decision is total, sub-minimum matches yield no result, the target is positive, Team 2's resources partition, the terminal target-par link holds, and equal resources give score plus one. *)
+(* Soundness bundle over well-formed match states: the decision is total, an undecided sub-minimum match yields no result while dismissal and the target decide regardless of the minimum, the target is positive, Team 2's resources partition, suspension losses fit inside used resources so the par netting is exact, the terminal target-par link holds, and equal resources give score plus one. *)
 Theorem calculator_sound_under_validity :
   forall tbl m,
     valid_match m ->
@@ -2620,16 +3019,27 @@ Theorem calculator_sound_under_validity :
       (resources_at_start tbl (inn_overs_allocated (match_t1 m)))
       (match_t1_interruptions m) > 0 ->
     decide_match tbl m <> Abandoned /\
-    (min_overs_met m = false -> decide_match tbl m = NoResult) /\
+    (min_overs_met m = false -> is_all_out (match_t2 m) = false ->
+       inn_score (match_t2 m) < compute_target tbl m ->
+       decide_match tbl m = NoResult) /\
+    (ended_by_stoppage (inn_phase (match_t2 m)) = false ->
+       compute_target tbl m <= inn_score (match_t2 m) ->
+       decide_match tbl m = Team2Wins) /\
+    (ended_by_stoppage (inn_phase (match_t2 m)) = false ->
+       is_all_out (match_t2 m) = true ->
+       inn_score (match_t2 m) + 1 < compute_target tbl m ->
+       decide_match tbl m = Team1Wins) /\
     compute_target tbl m >= 1 /\
     resources_used tbl (match_t2 m) + resources_available tbl (match_t2 m) =
       resources_at_start tbl (inn_overs_allocated (match_t2 m)) /\
+    total_resources_lost tbl (match_t2_interruptions m) <=
+      resources_used tbl (match_t2 m) /\
     (resources_available tbl (match_t2 m) = 0 ->
        compute_target tbl m = compute_par tbl m + 1) /\
     fair_result m tbl.
 Proof.
   intros tbl m Hvalid HR1.
-  destruct Hvalid as (Hv1 & Hv2 & Hseq1 & Hseq2 & Hg50).
+  destruct Hvalid as (Hv1 & Hv2 & Hseq1 & Hseq2 & Hafter1 & Hafter2 & Hg50).
   destruct Hv2 as (Hw2 & Hov2 & Halloc2 & Hballs2 & Hcoh2).
   assert (Havail : resources_available tbl (match_t2 m) <=
                    resources_at_start tbl (inn_overs_allocated (match_t2 m))).
@@ -2639,10 +3049,13 @@ Proof.
     - apply table_overs_mono. unfold overs_remaining. lia. }
   repeat split.
   - apply decide_match_never_abandoned.
-  - intro H. apply decide_match_below_min. exact H.
+  - intros Hmin Hout Hscore. apply decide_match_below_min; assumption.
+  - intros Hstop Hreach. apply decide_match_target_reached; assumption.
+  - intros Hstop Hout Hlow. apply decide_match_all_out_below_target; assumption.
   - unfold compute_target, target_from_states.
     apply target_always_positive. exact HR1.
   - apply resources_partition; assumption.
+  - apply (valid_seq_losses_le_used tbl (match_t2 m)); assumption.
   - intro H. apply compute_target_par_terminal. exact H.
   - unfold fair_result. intro HR.
     unfold compute_target, target_from_states.
@@ -2663,6 +3076,212 @@ Proof.
   split; intro H.
   - apply Nat.leb_le. exact H.
   - apply Nat.leb_le. exact H.
+Qed.
+
+(* Ball-level par monotonicity mirrors the over-level lemma at the 10000 scale. *)
+Theorem ball_par_monotone_in_R2_used :
+  forall t1_score R1 R2a R2b g50,
+    R1 > 0 ->
+    R2a <= R2b ->
+    ball_par_score t1_score R1 R2a g50 <= ball_par_score t1_score R1 R2b g50.
+Proof.
+  intros t1_score R1 R2a R2b g50 HR1 Hle.
+  unfold ball_par_score.
+  destruct (R2a <? R1) eqn:Ea; destruct (R2b <? R1) eqn:Eb.
+  - apply Nat.Div0.div_le_mono. apply Nat.mul_le_mono_l. exact Hle.
+  - apply Nat.ltb_lt in Ea. apply Nat.ltb_ge in Eb.
+    assert (t1_score * R2a / R1 <= t1_score).
+    { apply Nat.Div0.div_le_upper_bound. nia. }
+    lia.
+  - apply Nat.ltb_ge in Ea. apply Nat.ltb_lt in Eb. lia.
+  - apply Nat.ltb_ge in Ea, Eb.
+    apply Nat.add_le_mono_l.
+    apply Nat.Div0.div_le_mono.
+    apply Nat.mul_le_mono_l. lia.
+Qed.
+
+(* Ball-level terminal link: with no resources left in the chase, the target is the par plus one. *)
+Theorem ball_target_par_terminal :
+  forall tbl t1 t2 t1_ints t2_ints g50,
+    ball_resources_available tbl t2 = 0 ->
+    ball_target_from_states tbl t1 (det_balls_allocated t2) t1_ints t2_ints g50 =
+    ball_par_from_states tbl t1 t2 t1_ints t2_ints g50 + 1.
+Proof.
+  intros tbl t1 t2 t1_ints t2_ints g50 H.
+  unfold ball_target_from_states, ball_par_from_states,
+         ball_resources_used_net, ball_resources_used, effective_ball_resources,
+         ball_resources_at_start.
+  rewrite H, Nat.sub_0_r.
+  apply ball_revised_target_is_par_plus_one.
+Qed.
+
+(* Ball-level result dispatcher mirroring decide_match over DetailedInningsState. *)
+Definition ball_decide_match
+  (tbl : BallResourceTable) (fmt : MatchFormat)
+  (t1 t2 : DetailedInningsState)
+  (t1_ints t2_ints : list BallInterruption) (g50 : nat) : MatchResult :=
+  if ended_by_stoppage (det_phase t2) then
+    if negb (min_balls_met_det t2 fmt) then NoResult
+    else par_result (ball_par_from_states tbl t1 t2 t1_ints t2_ints g50)
+                    (det_score t2) true
+  else
+    determine_result
+      (ball_target_from_states tbl t1 (det_balls_allocated t2) t1_ints t2_ints g50)
+      (det_score t2) (is_det_complete t2) (is_det_all_out t2)
+      (min_balls_met_det t2 fmt).
+
+Theorem ball_decide_match_stopped_below_min :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    ended_by_stoppage (det_phase t2) = true ->
+    min_balls_met_det t2 fmt = false ->
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 = NoResult.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 Hstop Hmin.
+  unfold ball_decide_match.
+  rewrite Hstop, Hmin. reflexivity.
+Qed.
+
+Theorem ball_decide_match_below_min :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    min_balls_met_det t2 fmt = false ->
+    is_det_all_out t2 = false ->
+    det_score t2 <
+      ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50 ->
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 = NoResult.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 Hmin Hout Hscore.
+  unfold ball_decide_match.
+  destruct (ended_by_stoppage (det_phase t2)).
+  - rewrite Hmin. reflexivity.
+  - unfold determine_result.
+    rewrite Hmin, Hout.
+    assert (E1 : (ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50
+                  <=? det_score t2) = false)
+      by (apply Nat.leb_gt; exact Hscore).
+    rewrite E1. reflexivity.
+Qed.
+
+Theorem ball_decide_match_stopped_par :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    min_balls_met_det t2 fmt = true ->
+    ended_by_stoppage (det_phase t2) = true ->
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 =
+    par_result (ball_par_from_states tbl t1 t2 t1i t2i g50) (det_score t2) true.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 Hmin Hstop.
+  unfold ball_decide_match.
+  rewrite Hstop, Hmin. reflexivity.
+Qed.
+
+Theorem ball_decide_match_stopped_trichotomy :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    min_balls_met_det t2 fmt = true ->
+    ended_by_stoppage (det_phase t2) = true ->
+    (ball_decide_match tbl fmt t1 t2 t1i t2i g50 = Team1Wins /\
+       det_score t2 < ball_par_from_states tbl t1 t2 t1i t2i g50) \/
+    (ball_decide_match tbl fmt t1 t2 t1i t2i g50 = Team2Wins /\
+       ball_par_from_states tbl t1 t2 t1i t2i g50 < det_score t2) \/
+    (ball_decide_match tbl fmt t1 t2 t1i t2i g50 = Tie /\
+       det_score t2 = ball_par_from_states tbl t1 t2 t1i t2i g50).
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 Hmin Hstop.
+  rewrite (ball_decide_match_stopped_par tbl fmt t1 t2 t1i t2i g50 Hmin Hstop).
+  unfold par_result. simpl.
+  destruct (det_score t2 <? ball_par_from_states tbl t1 t2 t1i t2i g50) eqn:E1.
+  - left. split; [reflexivity | apply Nat.ltb_lt; exact E1].
+  - destruct (ball_par_from_states tbl t1 t2 t1i t2i g50 <? det_score t2) eqn:E2.
+    + right; left. split; [reflexivity | apply Nat.ltb_lt; exact E2].
+    + right; right. split; [reflexivity |].
+      apply Nat.ltb_ge in E1. apply Nat.ltb_ge in E2. lia.
+Qed.
+
+Theorem ball_decide_match_never_abandoned :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 <> Abandoned.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50.
+  unfold ball_decide_match.
+  destruct (ended_by_stoppage (det_phase t2)).
+  - destruct (negb (min_balls_met_det t2 fmt));
+      [discriminate | apply par_result_never_abandoned].
+  - apply determine_result_never_abandoned.
+Qed.
+
+Theorem ball_decide_match_target_reached :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    ended_by_stoppage (det_phase t2) = false ->
+    ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50 <=
+      det_score t2 ->
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 = Team2Wins.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 Hstop Hreach.
+  unfold ball_decide_match. rewrite Hstop.
+  apply target_reached_wins_regardless. exact Hreach.
+Qed.
+
+Theorem ball_decide_match_all_out_below_target :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    ended_by_stoppage (det_phase t2) = false ->
+    is_det_all_out t2 = true ->
+    det_score t2 + 1 <
+      ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50 ->
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 = Team1Wins.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 Hstop Hout Hlow.
+  unfold ball_decide_match. rewrite Hstop, Hout.
+  rewrite all_out_decides_regardless.
+  assert (E1 : (ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50
+                <=? det_score t2) = false)
+    by (apply Nat.leb_gt; lia).
+  assert (E2 : (det_score t2 + 1 =?
+                ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50)
+               = false)
+    by (apply Nat.eqb_neq; lia).
+  rewrite E1, E2. reflexivity.
+Qed.
+
+(* The ball-level par regime cannot rob a chase that had already reached the target. *)
+Theorem ball_decide_match_stopped_target_reached :
+  forall tbl fmt t1 t2 t1i t2i g50,
+    effective_ball_resources tbl
+      (ball_resources_at_start tbl (det_balls_allocated t1)) t1i > 0 ->
+    ended_by_stoppage (det_phase t2) = true ->
+    min_balls_met_det t2 fmt = true ->
+    ball_target_from_states tbl t1 (det_balls_allocated t2) t1i t2i g50 <=
+      det_score t2 ->
+    ball_decide_match tbl fmt t1 t2 t1i t2i g50 = Team2Wins.
+Proof.
+  intros tbl fmt t1 t2 t1i t2i g50 HR1 Hstop Hmin Hreach.
+  rewrite (ball_decide_match_stopped_par tbl fmt t1 t2 t1i t2i g50 Hmin Hstop).
+  assert (Hpar : ball_par_from_states tbl t1 t2 t1i t2i g50 < det_score t2).
+  { unfold ball_par_from_states; cbv zeta.
+    unfold ball_target_from_states in Hreach; cbv zeta in Hreach.
+    assert (HR2u : ball_resources_used_net tbl t2 t2i <=
+                   effective_ball_resources tbl
+                     (ball_resources_at_start tbl (det_balls_allocated t2)) t2i).
+    { unfold ball_resources_used_net, ball_resources_used,
+             effective_ball_resources, ball_resources_at_start.
+      lia. }
+    assert (Hmono := ball_par_monotone_in_R2_used (det_score t1)
+                       (effective_ball_resources tbl
+                          (ball_resources_at_start tbl (det_balls_allocated t1)) t1i)
+                       (ball_resources_used_net tbl t2 t2i)
+                       (effective_ball_resources tbl
+                          (ball_resources_at_start tbl (det_balls_allocated t2)) t2i)
+                       g50 HR1 HR2u).
+    rewrite (ball_revised_target_is_par_plus_one (det_score t1)
+               (effective_ball_resources tbl
+                  (ball_resources_at_start tbl (det_balls_allocated t1)) t1i)
+               (effective_ball_resources tbl
+                  (ball_resources_at_start tbl (det_balls_allocated t2)) t2i)
+               g50) in Hreach.
+    lia. }
+  unfold par_result.
+  assert (E1 : (det_score t2 <? ball_par_from_states tbl t1 t2 t1i t2i g50) = false)
+    by (apply Nat.ltb_ge; lia).
+  assert (E2 : (ball_par_from_states tbl t1 t2 t1i t2i g50 <? det_score t2) = true)
+    by (apply Nat.ltb_lt; exact Hpar).
+  rewrite E1, E2. reflexivity.
 Qed.
 
 (* Format-specific thresholds *)
@@ -2853,22 +3472,23 @@ Proof.
   reflexivity.
 Qed.
 
-Lemma powerplay_boost_full_odi :
-  forall tbl, powerplay_boost_lookup tbl 50 0 = 1000.
+Lemma powerplay_boost_full :
+  forall tbl, powerplay_boost_lookup tbl (table_span tbl) 0 = 1000.
 Proof.
   intros tbl.
   unfold powerplay_boost_lookup.
-  rewrite table_full_odi.
+  rewrite table_full.
   reflexivity.
 Qed.
 
 Definition PowerplayBoostTable (tbl : ResourceTable) : ResourceTable := {|
   lookup := powerplay_boost_lookup tbl;
+  table_span := table_span tbl;
   table_overs_mono := powerplay_boost_overs_mono tbl;
   table_wickets_mono := powerplay_boost_wickets_mono tbl;
   table_allout := powerplay_boost_allout tbl;
   table_no_overs := powerplay_boost_no_overs tbl;
-  table_full_odi := powerplay_boost_full_odi tbl
+  table_full := powerplay_boost_full tbl
 |}.
 
 Theorem powerplay_boost_dominates :
@@ -2880,6 +3500,24 @@ Proof.
   simpl.
   unfold powerplay_boost_lookup.
   assert (H := powerplay_adjustment_increases (lookup tbl o w)).
+  lia.
+Qed.
+
+(* The innings-level powerplay adjustment coincides with reading the boosted lawful table at the innings position, so the two artifacts certify one another. *)
+Theorem resources_with_powerplay_boost_agree :
+  forall tbl inn,
+    in_powerplay inn = true ->
+    powerplay_resource_adjustment (resources_available tbl inn) true <= 1000 ->
+    resources_with_powerplay tbl inn =
+    resources_available (PowerplayBoostTable tbl) inn.
+Proof.
+  intros tbl inn Hpp Hcap.
+  unfold resources_with_powerplay.
+  rewrite Hpp.
+  change (resources_available (PowerplayBoostTable tbl) inn)
+    with (powerplay_boost_lookup tbl (overs_remaining inn) (inn_wickets inn)).
+  unfold powerplay_boost_lookup.
+  fold (resources_available tbl inn).
   lia.
 Qed.
 
@@ -2911,17 +3549,18 @@ Proof. reflexivity. Qed.
 Theorem hundred_below_threshold_no_result :
   forall tbl t2,
     inn_overs_faced t2 < 4 ->
+    is_all_out t2 = false ->
     let m := {| match_format := TheHundred;
                 match_t1 := initial_innings 16;
                 match_t2 := t2;
                 match_t1_interruptions := [];
                 match_t2_interruptions := [];
                 match_g50 := 245 |} in
+    inn_score t2 < compute_target tbl m ->
     compute_result tbl m = NoResult.
 Proof.
-  intros tbl t2 H m.
-  apply below_threshold_implies_noresult.
-  simpl. exact H.
+  intros tbl t2 H Hout m Hscore.
+  apply below_threshold_implies_noresult; simpl; assumption.
 Qed.
 
 Theorem hundred_fewer_balls_than_t20 :
@@ -2980,7 +3619,7 @@ Proof. reflexivity. Qed.
 (* Over-floor projection: the simplest lawful BallResourceTable from a ResourceTable. *)
 
 Definition over_lookup_to_ball (tbl : ResourceTable) (b : balls) (w : wickets) : scaled_resource :=
-  let o := Nat.min (b / 6) 50 in
+  let o := Nat.min (b / 6) (table_span tbl) in
   lookup tbl o w * 10.
 
 Lemma over_lookup_to_ball_mono :
@@ -3023,23 +3662,24 @@ Proof.
   rewrite table_no_overs. lia.
 Qed.
 
-Lemma over_lookup_to_ball_full_odi :
-  forall tbl, over_lookup_to_ball tbl 300 0 = 10000.
+Lemma over_lookup_to_ball_full :
+  forall tbl, over_lookup_to_ball tbl (table_span tbl * 6) 0 = 10000.
 Proof.
   intros tbl.
   unfold over_lookup_to_ball.
-  replace (300 / 6) with 50 by reflexivity.
+  rewrite Nat.div_mul by lia.
   rewrite Nat.min_id.
-  rewrite table_full_odi. reflexivity.
+  rewrite table_full. reflexivity.
 Qed.
 
 Definition BallTableFromOvers (tbl : ResourceTable) : BallResourceTable := {|
   ball_lookup := over_lookup_to_ball tbl;
+  ball_table_span := table_span tbl * 6;
   ball_table_mono := over_lookup_to_ball_mono tbl;
   ball_table_wickets_mono := over_lookup_to_ball_wickets_mono tbl;
   ball_table_allout := over_lookup_to_ball_allout tbl;
   ball_table_no_balls := over_lookup_to_ball_no_balls tbl;
-  ball_table_full_odi := over_lookup_to_ball_full_odi tbl
+  ball_table_full := over_lookup_to_ball_full tbl
 |}.
 
 (* Linear interpolation to ball granularity: monotone in balls and at the boundaries unconditionally, antitone in wickets under the concavity assumption below. *)
@@ -3180,18 +3820,17 @@ Qed.
 (* A concave-in-wickets table interpolates to a lawful BallResourceTable. *)
 
 Lemma interpolate_resource_full :
-  forall tbl, interpolate_resource tbl 300 0 = 1000 * 1000.
+  forall tbl, interpolate_resource tbl (table_span tbl * 6) 0 = 1000 * 1000.
 Proof.
   intros tbl.
-  replace 300 with (50 * 6) by reflexivity.
-  rewrite (interpolate_resource_at_overs_boundary tbl 50 0).
-  rewrite table_full_odi. reflexivity.
+  rewrite (interpolate_resource_at_overs_boundary tbl (table_span tbl) 0).
+  rewrite table_full. reflexivity.
 Qed.
 
 (* Interpolation lands at the 1,000,000 scale; division by 100 reaches the 10,000 scale of BallResourceTable. *)
 
 Definition interpolate_ball_lookup (tbl : ResourceTable) (b : balls) (w : wickets) : scaled_resource :=
-  interpolate_resource tbl (Nat.min b 300) w / 100.
+  interpolate_resource tbl (Nat.min b (table_span tbl * 6)) w / 100.
 
 Lemma interpolate_ball_lookup_mono :
   forall tbl b1 b2 w,
@@ -3236,25 +3875,103 @@ Proof.
   simpl. reflexivity.
 Qed.
 
-Lemma interpolate_ball_lookup_full_odi :
-  forall tbl, interpolate_ball_lookup tbl 300 0 = 10000.
+Lemma interpolate_ball_lookup_full :
+  forall tbl, interpolate_ball_lookup tbl (table_span tbl * 6) 0 = 10000.
 Proof.
   intros tbl. unfold interpolate_ball_lookup.
-  replace (Nat.min 300 300) with 300 by (symmetry; apply Nat.min_id).
+  rewrite Nat.min_id.
   rewrite interpolate_resource_full.
-  vm_compute. reflexivity.
+  reflexivity.
 Qed.
 
 Definition BallTableFromInterpolation
   (tbl : ResourceTable)
   (Hconc : table_concave_in_wickets tbl) : BallResourceTable := {|
   ball_lookup := interpolate_ball_lookup tbl;
+  ball_table_span := table_span tbl * 6;
   ball_table_mono := interpolate_ball_lookup_mono tbl;
   ball_table_wickets_mono := interpolate_ball_lookup_wickets_mono tbl Hconc;
   ball_table_allout := interpolate_ball_lookup_allout tbl;
   ball_table_no_balls := interpolate_ball_lookup_no_balls tbl;
-  ball_table_full_odi := interpolate_ball_lookup_full_odi tbl
+  ball_table_full := interpolate_ball_lookup_full tbl
 |}.
+
+(******************************************************************************)
+(*            CONCAVE WITNESS: THE INTERPOLATION CONSTRUCTOR LIVES             *)
+(******************************************************************************)
+
+(* A linear-in-wickets table certifies the concavity hypothesis, so BallTableFromInterpolation is inhabited; the published table refutes the same hypothesis further below. *)
+
+Definition tri_lookup (u : overs) (w : wickets) : resource :=
+  Nat.min u 50 * 2 * (10 - w).
+
+Lemma tri_overs_mono :
+  forall u1 u2 w, u1 <= u2 -> tri_lookup u1 w <= tri_lookup u2 w.
+Proof.
+  intros u1 u2 w Hle.
+  unfold tri_lookup.
+  apply Nat.mul_le_mono_r.
+  apply Nat.mul_le_mono_r.
+  apply Nat.min_le_compat_r. exact Hle.
+Qed.
+
+Lemma tri_wickets_mono :
+  forall u w1 w2, w1 <= w2 -> tri_lookup u w2 <= tri_lookup u w1.
+Proof.
+  intros u w1 w2 Hle.
+  unfold tri_lookup.
+  apply Nat.mul_le_mono_l. lia.
+Qed.
+
+Lemma tri_allout : forall u, tri_lookup u 10 = 0.
+Proof.
+  intros u. unfold tri_lookup.
+  rewrite Nat.sub_diag. apply Nat.mul_0_r.
+Qed.
+
+Lemma tri_no_overs : forall w, tri_lookup 0 w = 0.
+Proof. intros w. reflexivity. Qed.
+
+Lemma tri_full : tri_lookup 50 0 = 1000.
+Proof. reflexivity. Qed.
+
+Definition TriangularTable : ResourceTable := {|
+  lookup := tri_lookup;
+  table_span := 50;
+  table_overs_mono := tri_overs_mono;
+  table_wickets_mono := tri_wickets_mono;
+  table_allout := tri_allout;
+  table_no_overs := tri_no_overs;
+  table_full := tri_full
+|}.
+
+Lemma tri_concave : table_concave_in_wickets TriangularTable.
+Proof.
+  intros o w1 w2 Hle. simpl.
+  unfold tri_lookup.
+  destruct (Nat.le_gt_cases 50 o) as [H50 | H50].
+  - rewrite (Nat.min_r (o + 1) 50) by lia.
+    rewrite (Nat.min_r o 50) by lia.
+    lia.
+  - rewrite (Nat.min_l (o + 1) 50) by lia.
+    rewrite (Nat.min_l o 50) by lia.
+    replace ((o + 1) * 2 * (10 - w2)) with (o * 2 * (10 - w2) + 2 * (10 - w2)) by nia.
+    replace ((o + 1) * 2 * (10 - w1)) with (o * 2 * (10 - w1) + 2 * (10 - w1)) by nia.
+    lia.
+Qed.
+
+(* The constructor is inhabited: the concavity certificate builds a lawful interpolated ball table. *)
+Definition TriangularBallTable : BallResourceTable :=
+  BallTableFromInterpolation TriangularTable tri_concave.
+
+(* Between over boundaries the interpolated instance is strictly finer than the over-floor projection. *)
+Example triangular_interpolation_mid_over :
+  ball_lookup TriangularBallTable 3 0 = 100.
+Proof. vm_compute. reflexivity. Qed.
+
+Example triangular_over_floor_coarser :
+  ball_lookup (BallTableFromOvers TriangularTable) 3 0 = 0.
+Proof. vm_compute. reflexivity. Qed.
 
 (******************************************************************************)
 (*               ICC STANDARD-EDITION CONCRETE TABLE                          *)
@@ -3423,11 +4140,12 @@ Proof. reflexivity. Qed.
 
 Definition ICCStandardTable : ResourceTable := {|
   lookup := icc_lookup;
+  table_span := 50;
   table_overs_mono := icc_overs_mono;
   table_wickets_mono := icc_wickets_mono;
   table_allout := icc_table_allout;
   table_no_overs := icc_table_no_overs;
-  table_full_odi := icc_table_full_odi
+  table_full := icc_table_full_odi
 |}.
 
 (* The over-floor projection serves the separable model without a concavity certificate. *)
@@ -3944,11 +4662,12 @@ Proof. vm_compute. reflexivity. Qed.
 
 Definition DLStandardBallTable : BallResourceTable := {|
   ball_lookup := dl_std_ball_lookup;
+  ball_table_span := 300;
   ball_table_mono := dl_std_ball_mono;
   ball_table_wickets_mono := dl_std_ball_wickets_mono;
   ball_table_allout := dl_std_ball_allout;
   ball_table_no_balls := dl_std_ball_no_balls;
-  ball_table_full_odi := dl_std_ball_full_odi
+  ball_table_full := dl_std_ball_full_odi
 |}.
 
 (* The published per-over sheet is the over-boundary restriction of the per-ball data. *)
@@ -3989,11 +4708,12 @@ Proof. vm_compute. reflexivity. Qed.
 
 Definition DLStandardTable : ResourceTable := {|
   lookup := dl_std_over_lookup;
+  table_span := 50;
   table_overs_mono := dl_std_over_mono;
   table_wickets_mono := dl_std_over_wickets_mono;
   table_allout := dl_std_over_allout;
   table_no_overs := dl_std_over_no_overs;
-  table_full_odi := dl_std_over_full_odi
+  table_full := dl_std_over_full_odi
 |}.
 
 (* Over-floor ball table from the published over sheet; DLStandardBallTable is the faithful one. *)
@@ -4042,6 +4762,128 @@ Proof.
   vm_compute in Hc.
   lia.
 Qed.
+
+(******************************************************************************)
+(*          NON-ODI SPANS: NORMALIZED RESTRICTIONS OF THE PUBLISHED DATA       *)
+(******************************************************************************)
+
+(* Lawful instances at non-ODI spans: the published data restricted to the shorter allocation and renormalized to 100% at its own full innings. Regulation T20 practice reads the unnormalized ODI-scale table, whose ratios these instances preserve; The Hundred is governed by the Professional Edition, so no fidelity is claimed beyond lawfulness. *)
+
+Definition t20_norm_lookup (u : overs) (w : wickets) : resource :=
+  dl2002_cell (Nat.min u 20 * 6) w * 1000 / dl2002_cell 120 0.
+
+Lemma t20_norm_overs_mono :
+  forall u1 u2 w, u1 <= u2 -> t20_norm_lookup u1 w <= t20_norm_lookup u2 w.
+Proof.
+  intros u1 u2 w Hle.
+  unfold t20_norm_lookup.
+  apply Nat.Div0.div_le_mono.
+  apply Nat.mul_le_mono_r.
+  apply dl2002_cell_mono_b.
+  apply Nat.mul_le_mono_r.
+  apply Nat.min_le_compat_r. exact Hle.
+Qed.
+
+Lemma t20_norm_wickets_mono :
+  forall u w1 w2, w1 <= w2 -> t20_norm_lookup u w2 <= t20_norm_lookup u w1.
+Proof.
+  intros u w1 w2 Hle.
+  unfold t20_norm_lookup.
+  apply Nat.Div0.div_le_mono.
+  apply Nat.mul_le_mono_r.
+  apply dl2002_cell_mono_w. exact Hle.
+Qed.
+
+Lemma t20_norm_allout : forall u, t20_norm_lookup u 10 = 0.
+Proof.
+  intros u. unfold t20_norm_lookup.
+  rewrite dl2002_cell_high_wickets by lia.
+  reflexivity.
+Qed.
+
+Lemma t20_norm_no_overs : forall w, t20_norm_lookup 0 w = 0.
+Proof.
+  intros w. unfold t20_norm_lookup. simpl.
+  rewrite dl2002_cell_no_balls. reflexivity.
+Qed.
+
+Lemma t20_norm_full : t20_norm_lookup 20 0 = 1000.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition T20NormalizedTable : ResourceTable := {|
+  lookup := t20_norm_lookup;
+  table_span := 20;
+  table_overs_mono := t20_norm_overs_mono;
+  table_wickets_mono := t20_norm_wickets_mono;
+  table_allout := t20_norm_allout;
+  table_no_overs := t20_norm_no_overs;
+  table_full := t20_norm_full
+|}.
+
+(* Ten of twenty overs carry 56.7% of a T20 innings under the published curve. *)
+Example t20_norm_half_innings : lookup T20NormalizedTable 10 0 = 567.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition hundred_norm_ball_lookup (b : balls) (w : wickets) : scaled_resource :=
+  dl2002_cell (Nat.min b 100) w * 10000 / dl2002_cell 100 0.
+
+Lemma hundred_norm_mono :
+  forall b1 b2 w, b1 <= b2 ->
+    hundred_norm_ball_lookup b1 w <= hundred_norm_ball_lookup b2 w.
+Proof.
+  intros b1 b2 w Hle.
+  unfold hundred_norm_ball_lookup.
+  apply Nat.Div0.div_le_mono.
+  apply Nat.mul_le_mono_r.
+  apply dl2002_cell_mono_b.
+  apply Nat.min_le_compat_r. exact Hle.
+Qed.
+
+Lemma hundred_norm_wickets_mono :
+  forall b w1 w2, w1 <= w2 ->
+    hundred_norm_ball_lookup b w2 <= hundred_norm_ball_lookup b w1.
+Proof.
+  intros b w1 w2 Hle.
+  unfold hundred_norm_ball_lookup.
+  apply Nat.Div0.div_le_mono.
+  apply Nat.mul_le_mono_r.
+  apply dl2002_cell_mono_w. exact Hle.
+Qed.
+
+Lemma hundred_norm_allout : forall b, hundred_norm_ball_lookup b 10 = 0.
+Proof.
+  intros b. unfold hundred_norm_ball_lookup.
+  rewrite dl2002_cell_high_wickets by lia.
+  reflexivity.
+Qed.
+
+Lemma hundred_norm_no_balls : forall w, hundred_norm_ball_lookup 0 w = 0.
+Proof.
+  intros w. unfold hundred_norm_ball_lookup. simpl.
+  rewrite dl2002_cell_no_balls. reflexivity.
+Qed.
+
+Lemma hundred_norm_full : hundred_norm_ball_lookup 100 0 = 10000.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition HundredNormalizedBallTable : BallResourceTable := {|
+  ball_lookup := hundred_norm_ball_lookup;
+  ball_table_span := 100;
+  ball_table_mono := hundred_norm_mono;
+  ball_table_wickets_mono := hundred_norm_wickets_mono;
+  ball_table_allout := hundred_norm_allout;
+  ball_table_no_balls := hundred_norm_no_balls;
+  ball_table_full := hundred_norm_full
+|}.
+
+(* The Hundred's ball-native innings now has a lawful table at its own span. *)
+Example hundred_innings_table_full :
+  ball_lookup HundredNormalizedBallTable (det_balls_allocated hundred_innings) 0 = 10000.
+Proof. vm_compute. reflexivity. Qed.
+
+Example hundred_norm_half_innings :
+  ball_lookup HundredNormalizedBallTable 50 0 = 5569.
+Proof. vm_compute. reflexivity. Qed.
 
 (******************************************************************************)
 (*               SECTION/VARIABLE REFACTOR DEMONSTRATION                       *)
@@ -4704,8 +5546,56 @@ Example result_1992 :
   determine_result
     (ball_target_from_states DLStandardBallTable
        england_1992 270 [] [sa_rain_1992] 245)
-    232 true true = Team1Wins.
+    232 true false true = Team1Wins.
 Proof. vm_compute. reflexivity. Qed.
+
+(* The 1992 history validates under the ball-level sequenced predicate. *)
+Example sa_rain_1992_valid :
+  valid_ball_interruption_seq 0 270 [sa_rain_1992].
+Proof. simpl. repeat split; lia. Qed.
+
+(* South Africa's completed innings: 232/6 off the 258 deliveries bowled, elapsed balls counting the 12 removed. *)
+Definition south_africa_1992 : DetailedInningsState := {|
+  det_score := 232;
+  det_wickets := 6;
+  det_balls_faced := 270;
+  det_balls_allocated := 270;
+  det_phase := Completed;
+  det_powerplay := NoPowerplay;
+  det_in_powerplay := false;
+  det_powerplay_balls_remaining := 0
+|}.
+
+Example south_africa_1992_after :
+  det_after_interruptions south_africa_1992 [sa_rain_1992].
+Proof.
+  unfold det_after_interruptions, det_balls_remaining; simpl.
+  split; lia.
+Qed.
+
+(* Clause 5.5 netting on the finished chase is exact: 88.5% used net of the 6.5% suspension inside the 95.0% start allocation. *)
+Example netting_exact_1992 :
+  ball_resources_used_net DLStandardBallTable south_africa_1992 [sa_rain_1992] = 8850 /\
+  ball_resources_used DLStandardBallTable south_africa_1992 = 9500.
+Proof. split; vm_compute; reflexivity. Qed.
+
+(* Terminal coherence on the day: the par sits one short of the target. *)
+Example par_1992 :
+  ball_par_from_states DLStandardBallTable england_1992 south_africa_1992
+    [] [sa_rain_1992] 245 = 234.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The ball-level dispatcher replays the full result. *)
+Example decide_1992 :
+  ball_decide_match DLStandardBallTable ODI england_1992 south_africa_1992
+    [] [sa_rain_1992] 245 = Team1Wins.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The single-history filters recover each innings' suspensions from the tagged record. *)
+Example history_partition_1992 :
+  ball_interruptions_for 2 [sa_rain_1992] = [sa_rain_1992] /\
+  ball_interruptions_for 1 [sa_rain_1992] = [].
+Proof. split; reflexivity. Qed.
 
 (******************************************************************************)
 (*               OCAML EXTRACTION                                              *)
@@ -4736,7 +5626,7 @@ Extract Constant Init.Nat.ltb => "(<)".
 Extract Constant Init.Nat.leb => "(<=)".
 Extract Constant Nat.min => "(fun a b -> if a < b then a else b)".
 
-(* Extraction surface: both formula scales, the match pipeline, the decision functions, and the verified tables. *)
+(* Extraction surface: both formula scales, the match pipeline, the decision functions at both granularities, the history filters, and the verified tables. *)
 Extraction "dls_extracted.ml"
   DLS.revised_target
   DLS.par_score
@@ -4752,13 +5642,25 @@ Extraction "dls_extracted.ml"
   DLS.compute_par
   DLS.compute_result
   DLS.decide_match
+  DLS.ball_decide_match
   DLS.determine_result
   DLS.par_result
+  DLS.is_all_out
+  DLS.is_det_all_out
+  DLS.min_balls_met_det
+  DLS.interruptions_for
+  DLS.ball_interruptions_for
+  DLS.match_of_history
   DLS.DLStandardBallTable
   DLS.DLStandardTable
   DLS.RationalDecayTable
   DLS.ICCStandardTable
   DLS.DummyTable
+  DLS.TriangularTable
+  DLS.TriangularBallTable
+  DLS.T20NormalizedTable
+  DLS.HundredNormalizedBallTable
   DLS_Extras.england_1992
   DLS_Extras.sa_rain_1992
+  DLS_Extras.south_africa_1992
   DLS.ODI DLS.T20 DLS.TheHundred.

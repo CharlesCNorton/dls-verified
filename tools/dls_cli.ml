@@ -51,7 +51,7 @@ let mk_innings score wickets faced alloc = {
   det_phase = DLS.InProgress; det_powerplay = DLS.NoPowerplay;
   det_in_powerplay = false; det_powerplay_balls_remaining = 0 }
 
-let parse_int_spec what s =
+let parse_int_spec what during s =
   match String.split_on_char ':' s with
   | [a; w; l] ->
       let at = int_arg (what ^ " AT") a
@@ -60,16 +60,16 @@ let parse_int_spec what s =
       if lost > at then die (Printf.sprintf "%s: LOST %d exceeds AT %d" what lost at);
       if wk > 9 then die (Printf.sprintf "%s: W %d exceeds 9" what wk);
       { DLS.bint_at_balls = at; bint_at_wickets = wk; bint_balls_lost = lost;
-        bint_during_innings = 0; bint_in_powerplay = false }
+        bint_during_innings = during; bint_in_powerplay = false }
   | _ -> die (what ^ ": expected AT:W:LOST")
 
-(* Splits argv rest into positional arguments and interruption/flag lists. *)
+(* Splits argv rest into positional arguments and interruption/flag lists; suspensions are tagged with their innings. *)
 let parse_rest rest =
   let pos = ref [] and t1i = ref [] and t2i = ref [] and csv = ref false in
   let rec go = function
     | [] -> ()
-    | "--t1-int" :: v :: r -> t1i := !t1i @ [parse_int_spec "--t1-int" v]; go r
-    | "--t2-int" :: v :: r -> t2i := !t2i @ [parse_int_spec "--t2-int" v]; go r
+    | "--t1-int" :: v :: r -> t1i := !t1i @ [parse_int_spec "--t1-int" 1 v]; go r
+    | "--t2-int" :: v :: r -> t2i := !t2i @ [parse_int_spec "--t2-int" 2 v]; go r
     | "--csv" :: r -> csv := true; go r
     | ("--t1-int" | "--t2-int") :: [] -> die "missing AT:W:LOST after interruption flag"
     | a :: r -> pos := !pos @ [a]; go r
@@ -184,7 +184,7 @@ let cmd_track pos t1i t2i =
       let p = DLS.ball_par_from_states tbl t1 (mk_innings 0 !wkts !faced b2) t1i t2i g50 in
       if !faced = b2 || !wkts = 10 then
         Printf.printf "Innings complete: %d/%d -- %s\n" !score !wkts
-          (show_result (DLS.determine_result t !score true true))
+          (show_result (DLS.determine_result t !score true (!wkts >= 10) true))
       else
         Printf.printf "Suspended at %d/%d after %d balls -- on termination: %s (par %d)\n"
           !score !wkts !faced (show_result (DLS.par_result p !score true)) p
@@ -276,9 +276,9 @@ let cmd_sensitivity pos =
 
 (* Every rain-affected 1992 World Cup match replayed against the Most Productive Overs rule; interruption states per the Wikipedia 1992 tournament pages; G50 = 245 throughout. *)
 
-let bint at w lost = {
+let bint during at w lost = {
   DLS.bint_at_balls = at; bint_at_wickets = w; bint_balls_lost = lost;
-  bint_during_innings = 0; bint_in_powerplay = false }
+  bint_during_innings = during; bint_in_powerplay = false }
 
 let target s t1_alloc t2_alloc t1_ints t2_ints =
   DLS.ball_target_from_states tbl (mk_innings s 0 t1_alloc t1_alloc)
@@ -294,7 +294,7 @@ let cmd_replay () =
      MPO: no result. DLS: no result (no minimum innings possible).\n\n";
 
   (* Australia 237/9; India 45/1 after 16.2 of 50 when 3 overs were lost. *)
-  let t = target 237 300 300 [] [bint 202 1 18] in
+  let t = target 237 300 300 [] [bint 2 202 1 18] in
   Printf.printf
     "1 Mar, Brisbane: Australia 237/9 (50); India 45/1 after 16.2 when rain cost\n\
      3 overs. MPO set 236 off 47 and India fell 1 run short on 234.\n\
@@ -309,10 +309,10 @@ let cmd_replay () =
     "1 Mar, Adelaide: Pakistan 74 all out; England 24/1 after 8 overs, abandoned.\n\
      MPO: no result (Pakistan's escaped point carried them to the title).\n\
      DLS: %s -- an 8-over innings is below the 20-over minimum either way.\n\n"
-    (show_result (DLS.determine_result t 24 false false));
+    (show_result (DLS.determine_result t 24 false false false));
 
   (* New Zealand cut from 50 to 35 to 24 overs (9/1 at 2.1, 52/2 at 11.2) and ended at 20.5 on 162/3; Zimbabwe received 18 overs: the tournament's one Team 1-interrupted case. *)
-  let nz_ints = [bint 287 1 90; bint 142 2 66; bint 19 3 19] in
+  let nz_ints = [bint 1 287 1 90; bint 1 142 2 66; bint 1 19 3 19] in
   let r1 = DLS.effective_ball_resources tbl (DLS.ball_resources_at_start tbl 300) nz_ints in
   let r2 = DLS.ball_resources_at_start tbl 108 in
   let t = target 162 300 108 nz_ints [] in
@@ -337,7 +337,7 @@ let cmd_replay () =
      else if 104 > p then Printf.sprintf " by %d runs" (104 - p) else "");
 
   (* South Africa 211/7; Pakistan 74/2 after 21.3 when 14 overs were lost. *)
-  let t = target 211 300 300 [] [bint 171 2 84] in
+  let t = target 211 300 300 [] [bint 2 171 2 84] in
   Printf.printf
     "8 Mar, Brisbane: South Africa 211/7 (50); Pakistan 74/2 after 21.3 when an\n\
      hour's rain cost 14 overs. MPO set 194 off 36; Pakistan closed 173/8,\n\
@@ -351,12 +351,12 @@ let cmd_replay () =
      4 overs. MPO set 195 off 46, chased with 5 wickets in hand. DLS: revised\n\
      target %d, %d or %d for 0, 1 or 2 wickets down at the stoppage (state\n\
      unsourced) -- a few runs easier than the MPO figure; the chase stands.\n\n"
-    (target 197 300 300 [] [bint 240 0 24])
-    (target 197 300 300 [] [bint 240 1 24])
-    (target 197 300 300 [] [bint 240 2 24]);
+    (target 197 300 300 [] [bint 2 240 0 24])
+    (target 197 300 300 [] [bint 2 240 1 24])
+    (target 197 300 300 [] [bint 2 240 2 24]);
 
   (* South Africa 236/4; England 62/0 after 12 when 9 overs were lost. *)
-  let t = target 236 300 300 [] [bint 228 0 54] in
+  let t = target 236 300 300 [] [bint 2 228 0 54] in
   Printf.printf
     "12 Mar, Melbourne: South Africa 236/4 (50); England 62/0 after 12 when rain\n\
      cost 9 overs. MPO set 226 off 41, chased with 3 wickets in hand. DLS:\n\
@@ -377,7 +377,7 @@ let cmd_replay () =
      DLS: R1 %s, suspension cost %s, R2 %s, revised target %d -- four to win\n\
      off the last ball. South Africa finished 232: %s. Proven in dls.v.\n\n"
     (pct r1) (pct lost) (pct r2) t
-    (show_result (DLS.determine_result t 232 true true));
+    (show_result (DLS.determine_result t 232 true false true));
 
   Printf.printf
     "1996 World Cup: no innings was cut by rain mid-match; the only weather\n\
