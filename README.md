@@ -108,8 +108,8 @@ finished on 232: `result_1992` proves Team 1 wins.
   data restricted and renormalized to the 20-over and 100-ball spans,
   inhabiting the span-indexed records away from the ODI anchor. No
   regulation fidelity is claimed: T20 practice reads the unnormalized
-  table, whose ratios these preserve, and The Hundred runs the
-  Professional Edition.
+  table, whose ratios these preserve to within a proven per-cell
+  rounding bracket, and The Hundred runs the Professional Edition.
 - `PowerplayBoostTable`: a what-if constructor that bakes a capped
   fielding-restriction boost into any lawful table and returns a lawful
   table, with the innings-level powerplay adjustment proven to coincide

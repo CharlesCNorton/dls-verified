@@ -12,7 +12,11 @@ machine-checked in dls.v (monotone in balls, antitone in wickets,\n\
 boundary rows certified; targets and pars proven positive, monotone,\n\
 and regulation-faithful). Interruptions are given as AT:W:LOST where\n\
 AT is balls remaining when play was suspended, W wickets down at that\n\
-moment, LOST the number of balls removed.\n\
+moment, LOST the number of balls removed. Elapsed balls include removed\n\
+deliveries: after a suspension, T2_FACED and the track count advance\n\
+past the LOST balls, so balls remaining always reads the physical\n\
+figure and the suspension's resources are netted by the AT:W:LOST\n\
+record rather than left in the allocation clock.\n\
 \n\
 usage:\n\
   dls target S T1_BALLS T2_BALLS [G50] [--t1-int AT:W:LOST]... [--t2-int AT:W:LOST]...\n\

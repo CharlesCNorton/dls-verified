@@ -307,6 +307,25 @@ Definition is_all_out (inn : InningsState) : bool :=
 Definition is_det_all_out (det : DetailedInningsState) : bool :=
   det_wickets det =? 10.
 
+(* A dismissed innings is complete at both granularities, so no innings state produces the all-out-but-incomplete flag pair that determine_result orders around. *)
+Lemma is_all_out_complete :
+  forall inn, is_all_out inn = true -> is_complete inn = true.
+Proof.
+  intros inn H.
+  unfold is_all_out in H.
+  unfold is_complete.
+  destruct (inn_phase inn); try reflexivity; rewrite H; reflexivity.
+Qed.
+
+Lemma is_det_all_out_complete :
+  forall det, is_det_all_out det = true -> is_det_complete det = true.
+Proof.
+  intros det H.
+  unfold is_det_all_out in H.
+  unfold is_det_complete.
+  destruct (det_phase det); try reflexivity; rewrite H; reflexivity.
+Qed.
+
 Definition in_powerplay (inn : InningsState) : bool :=
   match inn_powerplay inn with
   | PP1 => true
@@ -420,6 +439,43 @@ Proof.
     exact Hle.
   - exact Hle.
 Qed.
+
+(******************************************************************************)
+(*                          TABLE TACTIC LAYER                                *)
+(******************************************************************************)
+
+Create HintDb dls.
+
+#[global] Hint Resolve table_overs_mono : dls.
+#[global] Hint Resolve table_wickets_mono : dls.
+#[global] Hint Resolve table_allout : dls.
+#[global] Hint Resolve table_no_overs : dls.
+#[global] Hint Resolve table_full : dls.
+#[global] Hint Resolve ball_table_mono : dls.
+#[global] Hint Resolve ball_table_wickets_mono : dls.
+#[global] Hint Resolve ball_table_allout : dls.
+#[global] Hint Resolve ball_table_no_balls : dls.
+#[global] Hint Resolve ball_table_full : dls.
+#[global] Hint Resolve Nat.Div0.div_le_mono : dls.
+#[global] Hint Resolve Nat.mul_le_mono_l : dls.
+#[global] Hint Resolve Nat.mul_le_mono_r : dls.
+#[global] Hint Resolve Nat.add_le_mono_l : dls.
+#[global] Hint Resolve Nat.add_le_mono_r : dls.
+
+(* Dispatches a table monotonicity goal to the record law and discharges the index side condition, unfolding the remaining-resource helpers for lia. *)
+Ltac dls_table_mono :=
+  match goal with
+  | [ |- lookup ?t ?u1 ?w <= lookup ?t ?u2 ?w ] =>
+      apply (table_overs_mono t u1 u2 w);
+      try unfold overs_remaining in *; lia
+  | [ |- lookup ?t ?u ?w2 <= lookup ?t ?u ?w1 ] =>
+      apply (table_wickets_mono t u w1 w2); lia
+  | [ |- ball_lookup ?t ?b1 ?w <= ball_lookup ?t ?b2 ?w ] =>
+      apply (ball_table_mono t b1 b2 w);
+      try unfold det_balls_remaining in *; lia
+  | [ |- ball_lookup ?t ?b ?w2 <= ball_lookup ?t ?b ?w1 ] =>
+      apply (ball_table_wickets_mono t b w1 w2); lia
+  end.
 
 (******************************************************************************)
 (*                            INTERRUPTIONS                                  *)
@@ -959,12 +1015,10 @@ Proof.
     specialize (IH _ _ H5).
     unfold resource_lost_by_interruption.
     assert (Hup : lookup tbl (int_at_overs i - int_overs_lost i) (int_at_wickets i) <=
-                  lookup tbl (int_at_overs i) (int_at_wickets i)).
-    { apply table_overs_mono. lia. }
-    assert (Hr : lookup tbl (int_at_overs i) (int_at_wickets i) <= lookup tbl r (int_at_wickets i)).
-    { apply table_overs_mono. exact H1. }
-    assert (Hw : lookup tbl r (int_at_wickets i) <= lookup tbl r w).
-    { apply table_wickets_mono. exact H3. }
+                  lookup tbl (int_at_overs i) (int_at_wickets i)) by dls_table_mono.
+    assert (Hr : lookup tbl (int_at_overs i) (int_at_wickets i) <=
+                 lookup tbl r (int_at_wickets i)) by dls_table_mono.
+    assert (Hw : lookup tbl r (int_at_wickets i) <= lookup tbl r w) by dls_table_mono.
     lia.
 Qed.
 
@@ -981,9 +1035,9 @@ Proof.
   assert (Hcur : lookup tbl (overs_remaining inn) (inn_wickets inn) <=
                  lookup tbl (seq_final_overs (inn_overs_allocated inn) ints)
                             (seq_final_wickets 0 ints)).
-  { eapply Nat.le_trans.
-    - apply (table_wickets_mono tbl _ _ _ Hw).
-    - apply table_overs_mono. exact Hov. }
+  { apply Nat.le_trans with
+      (m := lookup tbl (overs_remaining inn) (seq_final_wickets 0 ints));
+    dls_table_mono. }
   lia.
 Qed.
 
@@ -1045,13 +1099,11 @@ Proof.
     specialize (IH _ _ H5).
     unfold ball_resource_lost_by_interruption.
     assert (Hup : ball_lookup tbl (bint_at_balls i - bint_balls_lost i) (bint_at_wickets i) <=
-                  ball_lookup tbl (bint_at_balls i) (bint_at_wickets i)).
-    { apply ball_table_mono. lia. }
+                  ball_lookup tbl (bint_at_balls i) (bint_at_wickets i)) by dls_table_mono.
     assert (Hr : ball_lookup tbl (bint_at_balls i) (bint_at_wickets i) <=
-                 ball_lookup tbl b (bint_at_wickets i)).
-    { apply ball_table_mono. exact H1. }
-    assert (Hw : ball_lookup tbl b (bint_at_wickets i) <= ball_lookup tbl b w).
-    { apply ball_table_wickets_mono. exact H3. }
+                 ball_lookup tbl b (bint_at_wickets i)) by dls_table_mono.
+    assert (Hw : ball_lookup tbl b (bint_at_wickets i) <= ball_lookup tbl b w)
+      by dls_table_mono.
     lia.
 Qed.
 
@@ -1067,9 +1119,9 @@ Proof.
   assert (Hcur : ball_lookup tbl (det_balls_remaining det) (det_wickets det) <=
                  ball_lookup tbl (ball_seq_final_balls (det_balls_allocated det) ints)
                                  (ball_seq_final_wickets 0 ints)).
-  { eapply Nat.le_trans.
-    - apply (ball_table_wickets_mono tbl _ _ _ Hw).
-    - apply ball_table_mono. exact Hb. }
+  { apply Nat.le_trans with
+      (m := ball_lookup tbl (det_balls_remaining det) (ball_seq_final_wickets 0 ints));
+    dls_table_mono. }
   lia.
 Qed.
 
@@ -1331,6 +1383,18 @@ Proof.
   destruct (target <=? score); reflexivity.
 Qed.
 
+(* With the coherence is_all_out_complete carries, the all-out branch agrees with the completed branch at the minimum: dismissal only matters below the gate. *)
+Theorem all_out_agrees_with_completed :
+  forall target score min_met,
+    determine_result target score true true min_met =
+    determine_result target score true false true.
+Proof.
+  intros target score min_met.
+  unfold determine_result.
+  destruct (target <=? score); [reflexivity|].
+  destruct (score + 1 =? target); reflexivity.
+Qed.
+
 (* Completed-chase boundary regressions: reaching the target wins, one short ties. *)
 Example completed_chase_at_target_wins :
   determine_result 235 235 true false true = Team2Wins.
@@ -1402,24 +1466,21 @@ Theorem allout_zero_resources :
   forall tbl o,
     lookup tbl o 10 = 0.
 Proof.
-  intros.
-  apply table_allout.
+  auto with dls.
 Qed.
 
 Theorem no_overs_zero_resources :
   forall tbl w,
     lookup tbl 0 w = 0.
 Proof.
-  intros.
-  apply table_no_overs.
+  auto with dls.
 Qed.
 
 Theorem full_innings_full_resources :
   forall tbl,
     lookup tbl (table_span tbl) 0 = 1000.
 Proof.
-  intros.
-  apply table_full.
+  auto with dls.
 Qed.
 
 (******************************************************************************)
@@ -2196,38 +2257,11 @@ Definition powerplay_eq_dec :
 (*                   HINT DATABASE AND CUSTOM TACTICS                        *)
 (******************************************************************************)
 
-Create HintDb dls.
+(* The database and dls_table_mono live with the table records; the target-layer hint and helpers join once the formulae exist. *)
 
-#[global] Hint Resolve table_overs_mono : dls.
-#[global] Hint Resolve table_wickets_mono : dls.
-#[global] Hint Resolve table_allout : dls.
-#[global] Hint Resolve table_no_overs : dls.
-#[global] Hint Resolve table_full : dls.
-#[global] Hint Resolve ball_table_mono : dls.
-#[global] Hint Resolve ball_table_wickets_mono : dls.
-#[global] Hint Resolve ball_table_allout : dls.
-#[global] Hint Resolve ball_table_no_balls : dls.
-#[global] Hint Resolve ball_table_full : dls.
-#[global] Hint Resolve Nat.Div0.div_le_mono : dls.
-#[global] Hint Resolve Nat.mul_le_mono_l : dls.
-#[global] Hint Resolve Nat.mul_le_mono_r : dls.
-#[global] Hint Resolve Nat.add_le_mono_l : dls.
-#[global] Hint Resolve Nat.add_le_mono_r : dls.
 #[global] Hint Resolve target_always_positive : dls.
 
 Ltac dls_arith := auto with dls arith; try lia; try nia.
-
-Ltac dls_table_mono :=
-  match goal with
-  | [ |- lookup ?t ?u1 ?w <= lookup ?t ?u2 ?w ] =>
-      apply (table_overs_mono t u1 u2 w); lia
-  | [ |- lookup ?t ?u ?w2 <= lookup ?t ?u ?w1 ] =>
-      apply (table_wickets_mono t u w1 w2); lia
-  | [ |- ball_lookup ?t ?b1 ?w <= ball_lookup ?t ?b2 ?w ] =>
-      apply (ball_table_mono t b1 b2 w); lia
-  | [ |- ball_lookup ?t ?b ?w2 <= ball_lookup ?t ?b ?w1 ] =>
-      apply (ball_table_wickets_mono t b w1 w2); lia
-  end.
 
 Ltac dls_unfold_target :=
   unfold revised_target, revised_target_method1, revised_target_method2, par_score.
@@ -3044,9 +3078,9 @@ Proof.
   assert (Havail : resources_available tbl (match_t2 m) <=
                    resources_at_start tbl (inn_overs_allocated (match_t2 m))).
   { unfold resources_available, resources_at_start.
-    eapply Nat.le_trans.
-    - apply (table_wickets_mono tbl _ 0 (inn_wickets (match_t2 m))). lia.
-    - apply table_overs_mono. unfold overs_remaining. lia. }
+    apply Nat.le_trans with
+      (m := lookup tbl (overs_remaining (match_t2 m)) 0);
+    dls_table_mono. }
   repeat split.
   - apply decide_match_never_abandoned.
   - intros Hmin Hout Hscore. apply decide_match_below_min; assumption.
@@ -3438,7 +3472,7 @@ Proof.
   unfold powerplay_boost_lookup.
   assert (H : powerplay_resource_adjustment (lookup tbl u1 w) true <=
               powerplay_resource_adjustment (lookup tbl u2 w) true).
-  { apply powerplay_adjustment_mono. apply table_overs_mono. exact Hle. }
+  { apply powerplay_adjustment_mono. dls_table_mono. }
   lia.
 Qed.
 
@@ -3450,7 +3484,7 @@ Proof.
   unfold powerplay_boost_lookup.
   assert (H : powerplay_resource_adjustment (lookup tbl u w2) true <=
               powerplay_resource_adjustment (lookup tbl u w1) true).
-  { apply powerplay_adjustment_mono. apply table_wickets_mono. exact Hle. }
+  { apply powerplay_adjustment_mono. dls_table_mono. }
   lia.
 Qed.
 
@@ -3643,7 +3677,7 @@ Proof.
   intros tbl b w1 w2 Hle.
   unfold over_lookup_to_ball.
   apply Nat.mul_le_mono_r.
-  apply table_wickets_mono. exact Hle.
+  dls_table_mono.
 Qed.
 
 Lemma over_lookup_to_ball_allout :
@@ -3736,8 +3770,7 @@ Proof.
     { rewrite HSeq. rewrite Nat.mul_comm. apply Nat.Div0.mod_mul. }
     rewrite HSb_div, HSb_mod.
     rewrite Nat.mul_0_l. rewrite Nat.Div0.div_0_l.
-    assert (Hmono: lookup tbl o w <= lookup tbl (S o) w).
-    { apply table_overs_mono. lia. }
+    assert (Hmono: lookup tbl o w <= lookup tbl (S o) w) by dls_table_mono.
     assert (Hcell: lookup tbl (o + 1) w = lookup tbl (S o) w).
     { f_equal. lia. }
     rewrite Hcell.
@@ -3765,8 +3798,7 @@ Proof.
       rewrite Nat.Div0.mod_add.
       apply Nat.mod_small. lia. }
     rewrite HSb_div, HSb_mod.
-    assert (Hmono: lookup tbl o w <= lookup tbl (o + 1) w).
-    { apply table_overs_mono. lia. }
+    assert (Hmono: lookup tbl o w <= lookup tbl (o + 1) w) by dls_table_mono.
     apply Nat.add_le_mono_l.
     apply Nat.Div0.div_le_mono.
     apply Nat.mul_le_mono_r.
@@ -3803,8 +3835,7 @@ Proof.
   unfold interpolate_resource.
   remember (b / 6) as o.
   remember (b mod 6) as r.
-  assert (Hf: lookup tbl o w2 <= lookup tbl o w1).
-  { apply table_wickets_mono. exact Hle. }
+  assert (Hf: lookup tbl o w2 <= lookup tbl o w1) by dls_table_mono.
   assert (Hdiff: lookup tbl (o + 1) w2 - lookup tbl o w2 <=
                  lookup tbl (o + 1) w1 - lookup tbl o w1).
   { apply Hconc. exact Hle. }
@@ -4767,10 +4798,36 @@ Qed.
 (*          NON-ODI SPANS: NORMALIZED RESTRICTIONS OF THE PUBLISHED DATA       *)
 (******************************************************************************)
 
-(* Lawful instances at non-ODI spans: the published data restricted to the shorter allocation and renormalized to 100% at its own full innings. Regulation T20 practice reads the unnormalized ODI-scale table, whose ratios these instances preserve; The Hundred is governed by the Professional Edition, so no fidelity is claimed beyond lawfulness. *)
+(* Lawful instances at non-ODI spans: the published data restricted to the shorter allocation and renormalized to 100% at its own full innings. Regulation T20 practice reads the unnormalized ODI-scale table, whose ratios these instances preserve to within the per-cell rounding brackets proven below; The Hundred is governed by the Professional Edition, so no fidelity is claimed beyond lawfulness. *)
+
+(* Floor-division bracket: the quotient times the divisor pins the dividend within one divisor unit. *)
+Lemma div_rounding_bracket :
+  forall a b, b <> 0 ->
+    a / b * b <= a /\ a < (a / b + 1) * b.
+Proof.
+  intros a b Hb.
+  pose proof (Nat.div_mod_eq a b) as Heq.
+  pose proof (Nat.mod_upper_bound a b Hb) as Hm.
+  split; nia.
+Qed.
 
 Definition t20_norm_lookup (u : overs) (w : wickets) : resource :=
   dl2002_cell (Nat.min u 20 * 6) w * 1000 / dl2002_cell 120 0.
+
+(* Each normalized cell times its normalizer brackets the exact rescaling of the published cell within one normalizer unit. *)
+Theorem t20_norm_cell_bracket :
+  forall u w,
+    t20_norm_lookup u w * dl2002_cell 120 0 <=
+      dl2002_cell (Nat.min u 20 * 6) w * 1000 /\
+    dl2002_cell (Nat.min u 20 * 6) w * 1000 <
+      (t20_norm_lookup u w + 1) * dl2002_cell 120 0.
+Proof.
+  intros u w.
+  unfold t20_norm_lookup.
+  apply div_rounding_bracket.
+  assert (H : dl2002_cell 120 0 = 566) by (vm_compute; reflexivity).
+  rewrite H. lia.
+Qed.
 
 Lemma t20_norm_overs_mono :
   forall u1 u2 w, u1 <= u2 -> t20_norm_lookup u1 w <= t20_norm_lookup u2 w.
@@ -4826,6 +4883,20 @@ Proof. vm_compute. reflexivity. Qed.
 
 Definition hundred_norm_ball_lookup (b : balls) (w : wickets) : scaled_resource :=
   dl2002_cell (Nat.min b 100) w * 10000 / dl2002_cell 100 0.
+
+Theorem hundred_norm_cell_bracket :
+  forall b w,
+    hundred_norm_ball_lookup b w * dl2002_cell 100 0 <=
+      dl2002_cell (Nat.min b 100) w * 10000 /\
+    dl2002_cell (Nat.min b 100) w * 10000 <
+      (hundred_norm_ball_lookup b w + 1) * dl2002_cell 100 0.
+Proof.
+  intros b w.
+  unfold hundred_norm_ball_lookup.
+  apply div_rounding_bracket.
+  assert (H : dl2002_cell 100 0 = 492) by (vm_compute; reflexivity).
+  rewrite H. lia.
+Qed.
 
 Lemma hundred_norm_mono :
   forall b1 b2 w, b1 <= b2 ->
@@ -4908,8 +4979,7 @@ Section WithTable.
   Proof.
     intros inn Hw Hov.
     unfold s_resources_avail, s_resources_start.
-    rewrite Hw. apply table_overs_mono.
-    unfold overs_remaining. lia.
+    rewrite Hw. dls_table_mono.
   Qed.
 
   Lemma s_resources_avail_mono_in_overs :
@@ -4920,7 +4990,7 @@ Section WithTable.
   Proof.
     intros inn1 inn2 Hwq Hov.
     unfold s_resources_avail. rewrite Hwq.
-    apply table_overs_mono. exact Hov.
+    dls_table_mono.
   Qed.
 
   Lemma s_resources_avail_mono_in_wickets :
@@ -4931,7 +5001,7 @@ Section WithTable.
   Proof.
     intros inn1 inn2 Hov Hw.
     unfold s_resources_avail. rewrite Hov.
-    apply table_wickets_mono. exact Hw.
+    dls_table_mono.
   Qed.
 
   Lemma s_completed_innings_no_resources :
